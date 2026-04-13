@@ -19,8 +19,10 @@
 
 .glass-panel {
   background: rgba(27, 27, 27, 0.7);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 .primary-gradient {

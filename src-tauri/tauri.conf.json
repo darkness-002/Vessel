@@ -8,6 +8,13 @@
     "devUrl": "http://localhost:1420",
     "frontendDist": "../build"
   },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    }
+  },
   "app": {
     "windows": [
   {
