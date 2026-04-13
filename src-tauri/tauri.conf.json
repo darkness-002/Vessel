@@ -1,0 +1,28 @@
+{
+  "productName": "vessel",
+  "version": "0.1.0",
+  "identifier": "com.vessel.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+  {
+    "title": "Vessel",
+    "label": "main",
+    "width": 1000,
+    "height": 800,
+    "minWidth": 600,
+    "minHeight": 500,
+    "decorations": true,
+    "resizable": true
+  }
+],
+    "security": {
+      "csp": null
+    }
+  }
+}
