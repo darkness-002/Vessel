@@ -384,10 +384,57 @@ fn wake_script() -> &'static str {
 }
 
 fn notification_hijack_script(app_id: &str) -> String {
-        format!(
-                r#"window.originalNotification = window.Notification; window.Notification = class {{ constructor(title, options) {{ window.__TAURI__.core.invoke('forward_notification', {{ appId: '{}', title: title, body: options ? (options.body || '') : '' }}); }} static get permission() {{ return 'granted'; }} static requestPermission() {{ return Promise.resolve('granted'); }} }};"#,
-                app_id
-        )
+    let app_id_json = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        r#"
+        (function() {{
+            if (window.__vesselNotificationHijackInstalled) return;
+            window.__vesselNotificationHijackInstalled = true;
+
+            const __appId = {app_id_json};
+            const __invoke = (payload) => {{
+                try {{
+                    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {{
+                        return window.__TAURI__.core.invoke('forward_notification', payload);
+                    }}
+                    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {{
+                        return window.__TAURI_INTERNALS__.invoke('forward_notification', payload);
+                    }}
+                }} catch (_err) {{}}
+                return Promise.resolve(null);
+            }};
+
+            const OriginalNotification = window.Notification;
+            const ForwardingNotification = class extends OriginalNotification {{
+                constructor(title, options) {{
+                    const safeTitle = title == null ? '' : String(title);
+                    const safeBody = options && options.body != null ? String(options.body) : '';
+                    __invoke({{ appId: __appId, title: safeTitle, body: safeBody }});
+                    super(title, options);
+                }}
+                static requestPermission(cb) {{
+                    const p = OriginalNotification.requestPermission
+                        ? OriginalNotification.requestPermission.call(OriginalNotification, cb)
+                        : Promise.resolve('granted');
+                    return Promise.resolve(p).catch(() => 'granted');
+                }}
+                static get permission() {{
+                    return (OriginalNotification && OriginalNotification.permission) || 'granted';
+                }}
+            }};
+
+            try {{
+                Object.defineProperty(window, 'Notification', {{
+                    configurable: true,
+                    writable: true,
+                    value: ForwardingNotification,
+                }});
+            }} catch (_err) {{
+                window.Notification = ForwardingNotification;
+            }}
+        }})();
+        "#
+    )
 }
 
 fn stealth_injection_script() -> &'static str {
@@ -443,10 +490,13 @@ fn escape_css_for_js(css: &str) -> String {
 }
 
 fn new_tab_bridge_script(app_id: &str) -> String {
-        r#"
+    let app_id_json = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    r#"
         (function() {
             if (window.__vesselTabBridgeInstalled) return;
             window.__vesselTabBridgeInstalled = true;
+
+            const __appId = __APP_ID_JSON__;
 
             const __absoluteUrl = (candidate) => {
                 try {
@@ -473,7 +523,7 @@ fn new_tab_bridge_script(app_id: &str) -> String {
                 const resolved = __absoluteUrl(targetUrl);
                 if (!resolved) return;
                 __invoke('request_new_tab', {
-                    appId: '__APP_ID__',
+                    appId: __appId,
                     url: resolved,
                     title: targetTitle ? String(targetTitle) : null
                 });
@@ -525,7 +575,11 @@ fn new_tab_bridge_script(app_id: &str) -> String {
             }, true);
         })();
         "#
-        .replace("__APP_ID__", app_id)
+    .replace("__APP_ID_JSON__", &app_id_json)
+}
+
+fn escape_js_for_eval(js: &str) -> String {
+    serde_json::to_string(js).unwrap_or_else(|_| String::from("\"\""))
 }
 
     fn parse_external_url(raw: &str) -> Result<Url, String> {
@@ -790,6 +844,17 @@ fn open_app(
                     escaped_css
                 );
                 let _ = existing_wv.eval(&css_script);
+            }
+        }
+
+        if let Some(js_code) = js {
+            if !js_code.trim().is_empty() {
+                let escaped_js = escape_js_for_eval(&js_code);
+                let runtime_script = format!(
+                    "try {{ (0, eval)({}); }} catch (_err) {{}}",
+                    escaped_js
+                );
+                let _ = existing_wv.eval(&runtime_script);
             }
         }
 

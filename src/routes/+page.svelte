@@ -17,6 +17,7 @@
       adblock: boolean;
       profile: string;
       customCss: string;
+      customJs: string;
       idleSleepSeconds: number;
     };
   };
@@ -166,6 +167,7 @@
         adblock: Boolean(input.features?.adblock),
         profile: input.features?.profile || 'default',
         customCss: input.features?.customCss || '',
+        customJs: input.features?.customJs || '',
         idleSleepSeconds: Number(input.features?.idleSleepSeconds ?? 15)
       }
     };
@@ -247,7 +249,7 @@
     const cssToInject = [themes[app.features?.theme || 'default'], siteOptimizations.css]
       .filter(Boolean)
       .join('\n');
-    const finalJsToInject = [jsToInject, siteOptimizations.js]
+    const finalJsToInject = [jsToInject, siteOptimizations.js, app.features.customJs || '']
       .filter(Boolean)
       .join('\n');
 
@@ -387,6 +389,7 @@
         !app.features
           || app.features.profile === undefined
           || app.features.customCss === undefined
+          || app.features.customJs === undefined
           || app.features.idleSleepSeconds === undefined
       );
       const normalizedApps = rawApps.map((app) => normalizeApp(app));
@@ -531,7 +534,7 @@
       name: trimmedName,
       icon: (newAppIcon || trimmedName.charAt(0)).toUpperCase(), 
       url: normalizedUrl, 
-      features: { theme: 'default', adblock: false, profile: 'default', customCss: '', idleSleepSeconds: 15 } 
+      features: { theme: 'default', adblock: false, profile: 'default', customCss: '', customJs: '', idleSleepSeconds: 15 } 
     };
     apps = [...apps, newApp]; 
     await persistApps(apps);
@@ -832,6 +835,19 @@
                     bind:value={editingApp.features.customCss}
                     rows="8"
                     placeholder="Example: body selector font-family Space Grotesk"
+                    class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-xs sm:text-sm text-on-surface font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                  ></textarea>
+                </div>
+
+                <div class="p-4 sm:p-6 rounded-lg bg-surface-container-high border border-outline-variant/10">
+                  <div class="mb-3">
+                    <h3 class="font-bold text-on-surface">Custom JavaScript Injection</h3>
+                    <p class="text-sm text-on-surface-variant">Run domain-specific DOM automation, including ad/noise cleanup scripts.</p>
+                  </div>
+                  <textarea
+                    bind:value={editingApp.features.customJs}
+                    rows="8"
+                    placeholder="Example: setInterval(() => removeAds(), 1000);"
                     class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-xs sm:text-sm text-on-surface font-mono focus:outline-none focus:ring-1 focus:ring-primary"
                   ></textarea>
                 </div>
