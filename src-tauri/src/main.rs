@@ -4,7 +4,6 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::Mutex,
     thread,
     time::Duration,
@@ -18,6 +17,10 @@ use tauri::{
     webview::WebviewBuilder, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition,
     PhysicalSize, Rect, State, WebviewUrl, WindowEvent,
 };
+
+mod metrics;
+mod security;
+mod web_scripts;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +38,7 @@ struct AppState {
     app_sleep_seconds: Mutex<HashMap<String, u64>>,
     active_webview: Mutex<Option<String>>,
     hibernate_tokens: Mutex<HashMap<String, u64>>,
+    safe_mode: Mutex<bool>,
 }
 
 const WEBVIEW_DESTROY_TIMEOUT_SECONDS: u64 = 600;
@@ -52,6 +56,40 @@ struct NewTabRequest {
     app_id: String,
     url: String,
     title: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticEvent {
+    level: String,
+    category: String,
+    app_id: String,
+    webview_id: Option<String>,
+    message: String,
+    detail: Option<String>,
+    time: String,
+}
+
+fn emit_diagnostic(
+    app: &tauri::AppHandle,
+    level: &str,
+    category: &str,
+    app_id: &str,
+    webview_id: Option<&str>,
+    message: &str,
+    detail: Option<String>,
+) {
+    let event = DiagnosticEvent {
+        level: level.to_string(),
+        category: category.to_string(),
+        app_id: app_id.to_string(),
+        webview_id: webview_id.map(|value| value.to_string()),
+        message: message.to_string(),
+        detail,
+        time: Local::now().format("%I:%M %p").to_string(),
+    };
+
+    let _ = app.emit("vessel-diagnostic", event);
 }
 
 fn get_stealth_user_agent() -> &'static str {
@@ -202,7 +240,7 @@ fn clear_notifications_db(path: &Path) -> Result<(), String> {
 
 fn apply_hibernate_script(handle: &tauri::AppHandle, label: &str) {
     if let Some(wv) = handle.get_webview(label) {
-        let _ = wv.eval(hibernate_script());
+        let _ = wv.eval(web_scripts::hibernate_script());
     }
 }
 
@@ -349,239 +387,6 @@ fn compute_webview_bounds(
     Some((logical_pos, logical_size, rect))
 }
 
-fn hibernate_script() -> &'static str {
-    r#"
-    if (!window.__vesselHibernate) {
-      window.__vesselHibernate = true;
-      document.querySelectorAll('video,audio').forEach((m) => {
-        try {
-          if (!m.paused) {
-            m.dataset.vesselWasPlaying = '1';
-            m.pause();
-          }
-        } catch (_) {}
-      });
-      document.documentElement.style.setProperty('caret-color', 'transparent');
-    }
-    "#
-}
-
-fn wake_script() -> &'static str {
-    r#"
-    if (window.__vesselHibernate) {
-      window.__vesselHibernate = false;
-      document.querySelectorAll('video,audio').forEach((m) => {
-        try {
-          if (m.dataset.vesselWasPlaying === '1') {
-            m.play().catch(() => {});
-            delete m.dataset.vesselWasPlaying;
-          }
-        } catch (_) {}
-      });
-      document.documentElement.style.removeProperty('caret-color');
-    }
-    "#
-}
-
-fn notification_hijack_script(app_id: &str) -> String {
-    let app_id_json = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
-    format!(
-        r#"
-        (function() {{
-            if (window.__vesselNotificationHijackInstalled) return;
-            window.__vesselNotificationHijackInstalled = true;
-
-            const __appId = {app_id_json};
-            const __invoke = (payload) => {{
-                try {{
-                    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {{
-                        return window.__TAURI__.core.invoke('forward_notification', payload);
-                    }}
-                    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {{
-                        return window.__TAURI_INTERNALS__.invoke('forward_notification', payload);
-                    }}
-                }} catch (_err) {{}}
-                return Promise.resolve(null);
-            }};
-
-            const OriginalNotification = window.Notification;
-            const ForwardingNotification = class extends OriginalNotification {{
-                constructor(title, options) {{
-                    const safeTitle = title == null ? '' : String(title);
-                    const safeBody = options && options.body != null ? String(options.body) : '';
-                    __invoke({{ appId: __appId, title: safeTitle, body: safeBody }});
-                    super(title, options);
-                }}
-                static requestPermission(cb) {{
-                    const p = OriginalNotification.requestPermission
-                        ? OriginalNotification.requestPermission.call(OriginalNotification, cb)
-                        : Promise.resolve('granted');
-                    return Promise.resolve(p).catch(() => 'granted');
-                }}
-                static get permission() {{
-                    return (OriginalNotification && OriginalNotification.permission) || 'granted';
-                }}
-            }};
-
-            try {{
-                Object.defineProperty(window, 'Notification', {{
-                    configurable: true,
-                    writable: true,
-                    value: ForwardingNotification,
-                }});
-            }} catch (_err) {{
-                window.Notification = ForwardingNotification;
-            }}
-        }})();
-        "#
-    )
-}
-
-fn stealth_injection_script() -> &'static str {
-    r#"
-    (function() {
-        if (window.__vesselStealthInstalled) return;
-        window.__vesselStealthInstalled = true;
-
-        // Mask webdriver detection
-        try {
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,  
-                set: () => {},
-                configurable: true
-            });
-        } catch (e) {}
-
-        // Mock chrome object if undefined or incomplete
-        if (!window.chrome) {
-            window.chrome = {};
-        }
-        if (!window.chrome.runtime) {
-            window.chrome.runtime = {};
-        }
-
-        // Override common fingerprinting properties
-        try {
-            Object.defineProperty(navigator, 'permissions', {
-                get: () => ({
-                    query: () => Promise.resolve({ state: 'granted' })
-                }),
-                configurable: true
-            });
-        } catch (e) {}
-
-        // Mask automation flags
-        try {
-            delete navigator.__proto__.webdriver;
-        } catch (e) {}
-        try {
-            if (window.__TAURI_INTERNALS__) {
-                window.__VESSEL_EMBEDDED = true;
-            }
-        } catch (e) {}
-    })();
-    "#
-}
-
-fn escape_css_for_js(css: &str) -> String {
-    // Use serde_json to safely escape the CSS string for JavaScript
-    // This handles all special characters: backticks, quotes, newlines, etc.
-    serde_json::to_string(css).unwrap_or_else(|_| String::from("\"\""))
-}
-
-fn new_tab_bridge_script(app_id: &str) -> String {
-    let app_id_json = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
-    r#"
-        (function() {
-            if (window.__vesselTabBridgeInstalled) return;
-            window.__vesselTabBridgeInstalled = true;
-
-            const __appId = __APP_ID_JSON__;
-
-            const __absoluteUrl = (candidate) => {
-                try {
-                    if (!candidate) return null;
-                    return new URL(String(candidate), window.location.href).href;
-                } catch (_err) {
-                    return null;
-                }
-            };
-
-            const __invoke = (command, payload) => {
-                try {
-                    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
-                        return window.__TAURI__.core.invoke(command, payload);
-                    }
-                    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
-                        return window.__TAURI_INTERNALS__.invoke(command, payload);
-                    }
-                } catch (_err) {}
-                return Promise.resolve(null);
-            };
-
-            const __vesselOpenTab = (targetUrl, targetTitle) => {
-                const resolved = __absoluteUrl(targetUrl);
-                if (!resolved) return;
-                __invoke('request_new_tab', {
-                    appId: __appId,
-                    url: resolved,
-                    title: targetTitle ? String(targetTitle) : null
-                });
-            };
-
-            const originalOpen = window.open;
-            window.open = function(url, name, specs) {
-                if (url) {
-                    __vesselOpenTab(url, name || null);
-                    return null;
-                }
-                return originalOpen ? originalOpen.apply(window, arguments) : null;
-            };
-
-            const findAnchor = (e) => {
-                if (e.target && e.target.closest) {
-                    const viaClosest = e.target.closest('a[href]');
-                    if (viaClosest) return viaClosest;
-                }
-
-                if (typeof e.composedPath === 'function') {
-                    const path = e.composedPath();
-                    for (const node of path) {
-                        if (!node || typeof node !== 'object') continue;
-                        if (node.tagName === 'A' && node.href) return node;
-                    }
-                }
-                return null;
-            };
-
-            document.addEventListener('click', function(e) {
-                const anchor = findAnchor(e);
-                if (!anchor || !anchor.href) return;
-
-                const isModifiedClick = e.metaKey || e.ctrlKey;
-                const opensBlank = anchor.target === '_blank';
-                if (isModifiedClick || opensBlank) {
-                    e.preventDefault();
-                    __vesselOpenTab(anchor.href, anchor.title || anchor.textContent || null);
-                }
-            }, true);
-
-            document.addEventListener('auxclick', function(e) {
-                if (e.button !== 1) return;
-                const anchor = findAnchor(e);
-                if (!anchor || !anchor.href) return;
-                e.preventDefault();
-                __vesselOpenTab(anchor.href, anchor.title || anchor.textContent || null);
-            }, true);
-        })();
-        "#
-    .replace("__APP_ID_JSON__", &app_id_json)
-}
-
-fn escape_js_for_eval(js: &str) -> String {
-    serde_json::to_string(js).unwrap_or_else(|_| String::from("\"\""))
-}
-
     fn parse_external_url(raw: &str) -> Result<Url, String> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -609,68 +414,44 @@ fn set_webview_hibernation(handle: &tauri::AppHandle, active_id: Option<&str>) {
             schedule_hibernation(handle, label);
         } else {
             let _ = wv.show();
-            let _ = wv.eval(wake_script());
+            let _ = wv.eval(web_scripts::wake_script());
         }
     }
 }
 
 #[tauri::command]
 fn get_resource_usage() -> ResourceUsage {
-    let root_pid = std::process::id();
-    let output = Command::new("ps")
-        .args(["-axo", "pid=,ppid=,%cpu=,rss="])
-        .output();
-
-    if let Ok(raw) = output {
-        let stdout = String::from_utf8_lossy(&raw.stdout);
-        let mut proc_rows: Vec<(u32, u32, f32, u64)> = Vec::new();
-
-        for line in stdout.lines() {
-            let mut parts = line.split_whitespace();
-            let pid = parts.next().and_then(|v| v.parse::<u32>().ok());
-            let ppid = parts.next().and_then(|v| v.parse::<u32>().ok());
-            let cpu = parts.next().and_then(|v| v.parse::<f32>().ok());
-            let rss_kb = parts.next().and_then(|v| v.parse::<u64>().ok());
-
-            if let (Some(pid), Some(ppid), Some(cpu), Some(rss_kb)) = (pid, ppid, cpu, rss_kb) {
-                proc_rows.push((pid, ppid, cpu, rss_kb));
-            }
-        }
-
-        let mut included: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        included.insert(root_pid);
-
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (pid, ppid, _, _) in &proc_rows {
-                if included.contains(ppid) && !included.contains(pid) {
-                    included.insert(*pid);
-                    changed = true;
-                }
-            }
-        }
-
-        let mut total_cpu = 0.0_f32;
-        let mut total_rss_kb = 0_u64;
-
-        for (pid, _ppid, cpu, rss_kb) in &proc_rows {
-            if included.contains(pid) {
-                total_cpu += *cpu;
-                total_rss_kb += *rss_kb;
-            }
-        }
-
-        return ResourceUsage {
-            cpu_percent: (total_cpu * 10.0).round() / 10.0,
-            ram_mb: total_rss_kb / 1024,
-        };
-    }
-
+    let (cpu_percent, ram_mb) = metrics::get_resource_usage_cross_platform(std::process::id());
     ResourceUsage {
-        cpu_percent: 0.0,
-        ram_mb: 0,
+        cpu_percent: (cpu_percent * 10.0).round() / 10.0,
+        ram_mb,
     }
+}
+
+#[tauri::command]
+fn set_safe_mode(state: State<'_, AppState>, enabled: bool) {
+    let mut safe_mode = state.safe_mode.lock().expect("safe_mode lock poisoned");
+    *safe_mode = enabled;
+}
+
+#[tauri::command]
+fn report_webview_error(
+    app: tauri::AppHandle,
+    app_id: String,
+    webview_id: Option<String>,
+    category: String,
+    message: String,
+    detail: Option<String>,
+) {
+    emit_diagnostic(
+        &app,
+        "warn",
+        &category,
+        &app_id,
+        webview_id.as_deref(),
+        &message,
+        detail,
+    );
 }
 
 #[tauri::command]
@@ -768,13 +549,22 @@ fn open_app(
     css: Option<String>,
     custom_css: Option<String>,
     js: Option<String>,
+    custom_js: Option<String>,
+    injection_allowlist: Option<Vec<String>>,
     idle_sleep_seconds: Option<u64>,
 ) -> Result<(), String> {
     let root_app_id = app_id.unwrap_or_else(|| id.clone());
     let app_key = sanitize_segment(&root_app_id, "app");
     let profile_name = sanitize_segment(profile.as_deref().unwrap_or("default"), "default");
-    let notification_script = notification_hijack_script(&root_app_id);
-    let tab_script = new_tab_bridge_script(&root_app_id);
+    let notification_script = web_scripts::notification_hijack_script(&root_app_id);
+    let tab_script = web_scripts::new_tab_bridge_script(&root_app_id);
+    let external_url = parse_external_url(&url)?;
+    let allowlist = security::normalize_allowlist(injection_allowlist);
+    let allow_custom_injection = security::is_host_allowed(&external_url, &allowlist);
+    let safe_mode_enabled = {
+        let safe_mode = state.safe_mode.lock().expect("safe_mode lock poisoned");
+        *safe_mode
+    };
 
     let expected_profile = format!("{app_key}:{profile_name}");
     let should_recreate = {
@@ -821,41 +611,182 @@ fn open_app(
         }
         let _ = existing_wv.show();
         let _ = existing_wv.set_focus();
-        let _ = existing_wv.eval(wake_script());
-        let _ = existing_wv.eval(&notification_script);
-        let _ = existing_wv.eval(&tab_script);
+        let _ = existing_wv.eval(web_scripts::wake_script());
+
+        if let Err(err) = existing_wv.eval(&notification_script) {
+            emit_diagnostic(
+                &handle,
+                "warn",
+                "ipc",
+                &root_app_id,
+                Some(&id),
+                "notification hijack injection failed",
+                Some(err.to_string()),
+            );
+        }
+
+        if let Err(err) = existing_wv.eval(&tab_script) {
+            emit_diagnostic(
+                &handle,
+                "warn",
+                "ipc",
+                &root_app_id,
+                Some(&id),
+                "tab bridge injection failed",
+                Some(err.to_string()),
+            );
+        }
 
         if let Some(css_code) = css {
             if !css_code.trim().is_empty() {
-                let escaped_css = escape_css_for_js(&css_code);
-                let css_script = format!(
-                    "const style = document.createElement('style'); style.textContent = {}; document.head.appendChild(style);",
-                    escaped_css
-                );
-                let _ = existing_wv.eval(&css_script);
+                if let Err(err) = security::validate_css_payload(&css_code) {
+                    emit_diagnostic(
+                        &handle,
+                        "warn",
+                        "security",
+                        &root_app_id,
+                        Some(&id),
+                        "base css blocked",
+                        Some(err),
+                    );
+                } else {
+                    let css_script = web_scripts::upsert_style_script("vessel-base-css", &css_code);
+                    if let Err(err) = existing_wv.eval(&css_script) {
+                        emit_diagnostic(
+                            &handle,
+                            "warn",
+                            "injection",
+                            &root_app_id,
+                            Some(&id),
+                            "base css injection failed",
+                            Some(err.to_string()),
+                        );
+                    }
+                }
             }
         }
 
-        if let Some(custom_css_code) = custom_css {
-            if !custom_css_code.trim().is_empty() {
-                let escaped_css = escape_css_for_js(&custom_css_code);
-                let css_script = format!(
-                    "const style = document.createElement('style'); style.id = 'vessel-custom-css'; style.textContent = {}; document.head.appendChild(style);",
-                    escaped_css
-                );
-                let _ = existing_wv.eval(&css_script);
+        if allow_custom_injection {
+            if let Some(custom_css_code) = custom_css {
+                if !custom_css_code.trim().is_empty() {
+                    if let Err(err) = security::validate_css_payload(&custom_css_code) {
+                        emit_diagnostic(
+                            &handle,
+                            "warn",
+                            "security",
+                            &root_app_id,
+                            Some(&id),
+                            "custom css blocked",
+                            Some(err),
+                        );
+                    } else {
+                        let css_script = web_scripts::upsert_style_script("vessel-custom-css", &custom_css_code);
+                        if let Err(err) = existing_wv.eval(&css_script) {
+                            emit_diagnostic(
+                                &handle,
+                                "warn",
+                                "injection",
+                                &root_app_id,
+                                Some(&id),
+                                "custom css injection failed",
+                                Some(err.to_string()),
+                            );
+                        }
+                    }
+                }
             }
+        } else if custom_css.as_ref().is_some_and(|val| !val.trim().is_empty()) {
+            emit_diagnostic(
+                &handle,
+                "warn",
+                "security",
+                &root_app_id,
+                Some(&id),
+                "custom css blocked by allowlist",
+                Some("current domain does not match configured allowlist".to_string()),
+            );
         }
 
-        if let Some(js_code) = js {
-            if !js_code.trim().is_empty() {
-                let escaped_js = escape_js_for_eval(&js_code);
-                let runtime_script = format!(
-                    "try {{ (0, eval)({}); }} catch (_err) {{}}",
-                    escaped_js
-                );
-                let _ = existing_wv.eval(&runtime_script);
+        if !safe_mode_enabled {
+            if let Some(js_code) = js {
+                if !js_code.trim().is_empty() {
+                    if let Err(err) = security::validate_js_payload(&js_code) {
+                        emit_diagnostic(
+                            &handle,
+                            "warn",
+                            "security",
+                            &root_app_id,
+                            Some(&id),
+                            "js payload blocked",
+                            Some(err),
+                        );
+                    } else {
+                        let runtime_script = web_scripts::upsert_runtime_js_script("vessel-runtime-js", &js_code);
+                        if let Err(err) = existing_wv.eval(&runtime_script) {
+                            emit_diagnostic(
+                                &handle,
+                                "warn",
+                                "injection",
+                                &root_app_id,
+                                Some(&id),
+                                "js injection failed",
+                                Some(err.to_string()),
+                            );
+                        }
+                    }
+                }
             }
+
+            if let Some(custom_js_code) = custom_js {
+                if !custom_js_code.trim().is_empty() {
+                    if let Err(err) = security::validate_js_payload(&custom_js_code) {
+                        emit_diagnostic(
+                            &handle,
+                            "warn",
+                            "security",
+                            &root_app_id,
+                            Some(&id),
+                            "custom js payload blocked",
+                            Some(err),
+                        );
+                    } else if allow_custom_injection {
+                        let runtime_script = web_scripts::upsert_runtime_js_script("vessel-custom-js", &custom_js_code);
+                        if let Err(err) = existing_wv.eval(&runtime_script) {
+                            emit_diagnostic(
+                                &handle,
+                                "warn",
+                                "injection",
+                                &root_app_id,
+                                Some(&id),
+                                "custom js injection failed",
+                                Some(err.to_string()),
+                            );
+                        }
+                    } else {
+                        emit_diagnostic(
+                            &handle,
+                            "warn",
+                            "security",
+                            &root_app_id,
+                            Some(&id),
+                            "custom js blocked by allowlist",
+                            Some("current domain does not match configured allowlist".to_string()),
+                        );
+                    }
+                }
+            }
+        } else if js.as_ref().is_some_and(|val| !val.trim().is_empty())
+            || custom_js.as_ref().is_some_and(|val| !val.trim().is_empty())
+        {
+            emit_diagnostic(
+                &handle,
+                "info",
+                "security",
+                &root_app_id,
+                Some(&id),
+                "safe mode skipped runtime js",
+                None,
+            );
         }
 
         let mut profiles = state.active_profiles.lock().expect("active_profiles lock poisoned");
@@ -867,8 +798,6 @@ fn open_app(
         return Err("unable to compute webview bounds".to_string());
     };
 
-    let external_url = parse_external_url(&url)?;
-
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(external_url))
         .user_agent(get_stealth_user_agent());
 
@@ -879,35 +808,43 @@ fn open_app(
     let _ = fs::create_dir_all(&session_dir);
     builder = builder.data_directory(session_dir);
 
-        builder = builder.initialization_script(stealth_injection_script());
+        builder = builder.initialization_script(web_scripts::stealth_injection_script());
         builder = builder.initialization_script(&notification_script);
         builder = builder.initialization_script(&tab_script);
 
     if let Some(css_code) = css {
         if !css_code.trim().is_empty() {
-            let escaped_css = escape_css_for_js(&css_code);
-            let css_script = format!(
-                "const style = document.createElement('style'); style.textContent = {}; document.head.appendChild(style);",
-                escaped_css
-            );
-            builder = builder.initialization_script(&css_script);
+            if security::validate_css_payload(&css_code).is_ok() {
+                let css_script = web_scripts::upsert_style_script("vessel-base-css", &css_code);
+                builder = builder.initialization_script(&css_script);
+            }
         }
     }
 
-    if let Some(custom_css_code) = custom_css {
-        if !custom_css_code.trim().is_empty() {
-            let escaped_css = escape_css_for_js(&custom_css_code);
-            let custom_css_script = format!(
-                "const style = document.createElement('style'); style.id = 'vessel-custom-css'; style.textContent = {}; document.head.appendChild(style);",
-                escaped_css
-            );
-            builder = builder.initialization_script(&custom_css_script);
+    if allow_custom_injection {
+        if let Some(custom_css_code) = custom_css {
+            if !custom_css_code.trim().is_empty() && security::validate_css_payload(&custom_css_code).is_ok() {
+                let custom_css_script = web_scripts::upsert_style_script("vessel-custom-css", &custom_css_code);
+                builder = builder.initialization_script(&custom_css_script);
+            }
         }
     }
 
-    if let Some(js_code) = js {
-        if !js_code.trim().is_empty() {
-            builder = builder.initialization_script(&js_code);
+    if !safe_mode_enabled {
+        if let Some(js_code) = js {
+            if !js_code.trim().is_empty() && security::validate_js_payload(&js_code).is_ok() {
+                let js_script = web_scripts::upsert_runtime_js_script("vessel-runtime-js", &js_code);
+                builder = builder.initialization_script(&js_script);
+            }
+        }
+        if let Some(custom_js_code) = custom_js {
+            if !custom_js_code.trim().is_empty()
+                && allow_custom_injection
+                && security::validate_js_payload(&custom_js_code).is_ok()
+            {
+                let js_script = web_scripts::upsert_runtime_js_script("vessel-custom-js", &custom_js_code);
+                builder = builder.initialization_script(&js_script);
+            }
         }
     }
 
@@ -944,6 +881,7 @@ fn main() {
                 app_sleep_seconds: Mutex::new(HashMap::new()),
                 active_webview: Mutex::new(None),
                 hibernate_tokens: Mutex::new(HashMap::new()),
+                safe_mode: Mutex::new(false),
             });
 
             let Some(main_webview_win) = app.get_webview_window("main") else {
@@ -988,8 +926,50 @@ fn main() {
             hide_all_webviews,
             get_notifications,
             clear_notifications,
-            get_resource_usage
+            get_resource_usage,
+            set_safe_mode,
+            report_webview_error
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vessel");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_segment_strips_invalid_chars() {
+        assert_eq!(sanitize_segment("  Work/Profile!  ", "fallback"), "Work-Profile");
+    }
+
+    #[test]
+    fn parse_external_url_adds_https_when_missing() {
+        let parsed = parse_external_url("example.com").expect("url should parse");
+        assert_eq!(parsed.scheme(), "https");
+        assert_eq!(parsed.host_str(), Some("example.com"));
+    }
+
+    #[test]
+    fn notification_payload_serializes_camel_case() {
+        let payload = VesselNotification {
+            app_id: "app-a".to_string(),
+            title: "Title".to_string(),
+            body: "Body".to_string(),
+            time: "10:00 AM".to_string(),
+        };
+        let value = serde_json::to_value(payload).expect("serialize notification");
+        assert!(value.get("appId").is_some());
+    }
+
+    #[test]
+    fn new_tab_request_serializes_camel_case() {
+        let payload = NewTabRequest {
+            app_id: "app-a".to_string(),
+            url: "https://example.com".to_string(),
+            title: Some("Example".to_string()),
+        };
+        let value = serde_json::to_value(payload).expect("serialize request");
+        assert!(value.get("appId").is_some());
+    }
 }

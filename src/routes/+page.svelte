@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event"; 
   import { load } from "@tauri-apps/plugin-store";
   import { onMount } from "svelte";
+  import { deserializeAppsBackup, normalizeFeatures, serializeAppsBackup } from "$lib/settingsPersistence";
 
   type AppView = 'gallery' | 'webview' | 'settings';
 
@@ -18,6 +19,7 @@
       profile: string;
       customCss: string;
       customJs: string;
+      injectionAllowlist: string;
       idleSleepSeconds: number;
     };
   };
@@ -47,6 +49,16 @@
     ramMb: number;
   };
 
+  type DiagnosticEvent = {
+    level: string;
+    category: string;
+    appId: string;
+    webviewId?: string | null;
+    message: string;
+    detail?: string | null;
+    time: string;
+  };
+
   // Core State
   let apps: AppConfig[] = [];
   let store: Awaited<ReturnType<typeof load>>;
@@ -65,7 +77,10 @@
   
   // Overlay State
   let showBrain = false;
+  let showDiagnostics = false;
   let notifications: VesselNotification[] = [];
+  let diagnostics: DiagnosticEvent[] = [];
+  let safeMode = false;
   let unreadCount = 0;
   let brainSearch = '';
   let brainAppFilter = 'all';
@@ -165,9 +180,7 @@
       features: {
         theme: input.features?.theme || 'default',
         adblock: Boolean(input.features?.adblock),
-        profile: input.features?.profile || 'default',
-        customCss: input.features?.customCss || '',
-        customJs: input.features?.customJs || '',
+        ...normalizeFeatures(input.features),
         idleSleepSeconds: Number(input.features?.idleSleepSeconds ?? 15)
       }
     };
@@ -211,7 +224,7 @@
   }
 
   async function persistApps(nextApps: AppConfig[]) {
-    localStorage.setItem('vessel_apps_backup', JSON.stringify(nextApps));
+    localStorage.setItem('vessel_apps_backup', serializeAppsBackup(nextApps));
 
     if (!storeReady) return;
     try {
@@ -225,15 +238,7 @@
   }
 
   function loadAppsBackup() {
-    try {
-      const raw = localStorage.getItem('vessel_apps_backup');
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed as AppConfig[];
-    } catch {
-      return [];
-    }
+    return deserializeAppsBackup<AppConfig>(localStorage.getItem('vessel_apps_backup'));
   }
 
   async function refreshUsage() {
@@ -249,11 +254,16 @@
     const cssToInject = [themes[app.features?.theme || 'default'], siteOptimizations.css]
       .filter(Boolean)
       .join('\n');
-    const finalJsToInject = [jsToInject, siteOptimizations.js, app.features.customJs || '']
+    const baseJsToInject = [jsToInject, siteOptimizations.js]
       .filter(Boolean)
       .join('\n');
 
     try {
+      const allowlist = (app.features.injectionAllowlist || '')
+        .split(/[,\n\s]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+
       await invoke("open_app", {
         id: tab.id,
         appId: app.id,
@@ -261,7 +271,9 @@
         profile: app.features.profile || 'default',
         css: cssToInject,
         customCss: app.features.customCss || '',
-        js: finalJsToInject,
+        js: baseJsToInject,
+        customJs: app.features.customJs || '',
+        injectionAllowlist: allowlist,
         idleSleepSeconds: Number(app.features.idleSleepSeconds || 0)
       });
       return { ok: true as const };
@@ -370,6 +382,12 @@
     }
   }
 
+  async function setSafeMode(enabled: boolean) {
+    safeMode = enabled;
+    await store.set('safeMode', enabled);
+    await invoke('set_safe_mode', { enabled });
+  }
+
   onMount(() => {
     let unlisten = () => {};
     let isUnmounted = false;
@@ -390,6 +408,7 @@
           || app.features.profile === undefined
           || app.features.customCss === undefined
           || app.features.customJs === undefined
+          || app.features.injectionAllowlist === undefined
           || app.features.idleSleepSeconds === undefined
       );
       const normalizedApps = rawApps.map((app) => normalizeApp(app));
@@ -399,7 +418,7 @@
       if (!savedApps || needsMigration || needsSync) {
         await persistApps(normalizedApps);
       } else {
-        localStorage.setItem('vessel_apps_backup', JSON.stringify(normalizedApps));
+        localStorage.setItem('vessel_apps_backup', serializeAppsBackup(normalizedApps));
       }
 
       const storedPerf = await store.get('showPerformanceStats');
@@ -409,6 +428,10 @@
       if (showPerformanceStats) {
         await setPerformanceStats(true);
       }
+
+      const storedSafeMode = await store.get('safeMode');
+      safeMode = Boolean(storedSafeMode);
+      await invoke('set_safe_mode', { enabled: safeMode });
 
       const dbNotifications = await invoke<VesselNotification[]>('get_notifications', { limit: 50 });
       if (!isUnmounted) {
@@ -424,10 +447,15 @@
         openTabFromEvent(event.payload);
       });
 
+      const unlistenDiagnostics = await listen('vessel-diagnostic', (event: { payload: DiagnosticEvent }) => {
+        diagnostics = [event.payload, ...diagnostics].slice(0, 120);
+      });
+
       const prev = unlisten;
       unlisten = () => {
         prev();
         unlistenTabs();
+        unlistenDiagnostics();
       };
     })();
 
@@ -463,6 +491,10 @@
   function toggleBrain() {
     showBrain = !showBrain;
     if (showBrain) unreadCount = 0;
+  }
+
+  function toggleDiagnostics() {
+    showDiagnostics = !showDiagnostics;
   }
 
   async function clearBrain() {
@@ -534,7 +566,7 @@
       name: trimmedName,
       icon: (newAppIcon || trimmedName.charAt(0)).toUpperCase(), 
       url: normalizedUrl, 
-      features: { theme: 'default', adblock: false, profile: 'default', customCss: '', customJs: '', idleSleepSeconds: 15 } 
+      features: { theme: 'default', adblock: false, profile: 'default', customCss: '', customJs: '', injectionAllowlist: '', idleSleepSeconds: 15 } 
     };
     apps = [...apps, newApp]; 
     await persistApps(apps);
@@ -632,6 +664,22 @@
     {/if}
 
     <div class="flex items-center gap-2 pr-1 sm:pr-2">
+      <button
+        on:click={() => setSafeMode(!safeMode)}
+        class="p-1.5 rounded-lg transition-colors {safeMode ? 'text-error hover:bg-error/10' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest'}"
+        title="Toggle safe mode"
+        aria-label="Toggle safe mode"
+      >
+        <span class="material-symbols-outlined text-[20px]">security</span>
+      </button>
+      <button
+        on:click={toggleDiagnostics}
+        class="p-1.5 rounded-lg transition-colors {showDiagnostics ? 'text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest'}"
+        title="Diagnostics"
+        aria-label="Diagnostics"
+      >
+        <span class="material-symbols-outlined text-[20px]">monitoring</span>
+      </button>
       <button on:click={toggleBrain} class="relative p-1.5 rounded-lg hover:bg-surface-container-highest transition-colors {showBrain ? 'text-primary' : 'text-on-surface-variant hover:text-on-surface'}" title="Notifications" aria-label="Notifications">
         <span class="material-symbols-outlined text-[20px]">notifications</span>
         {#if unreadCount > 0}
@@ -851,6 +899,19 @@
                     class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-xs sm:text-sm text-on-surface font-mono focus:outline-none focus:ring-1 focus:ring-primary"
                   ></textarea>
                 </div>
+
+                <div class="p-4 sm:p-6 rounded-lg bg-surface-container-high border border-outline-variant/10">
+                  <div class="mb-3">
+                    <h3 class="font-bold text-on-surface">Injection Domain Allowlist</h3>
+                    <p class="text-sm text-on-surface-variant">Only these domains can run custom CSS and JS. Use comma or newline separated hostnames.</p>
+                  </div>
+                  <textarea
+                    bind:value={editingApp.features.injectionAllowlist}
+                    rows="4"
+                    placeholder="example.com, app.example.com"
+                    class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-3 text-xs sm:text-sm text-on-surface font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                  ></textarea>
+                </div>
               </div>
             </section>
           </div>
@@ -908,6 +969,46 @@
             </div>
             <h5 class="text-sm font-bold text-primary-fixed-dim mb-1">{note.title}</h5>
             <p class="text-sm text-on-surface-variant leading-relaxed">{note.body}</p>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if showDiagnostics}
+    <div class="fixed top-14 right-0 bottom-0 w-full sm:w-[360px] lg:w-[420px] glass-panel z-[75] border-l border-outline-variant/15 flex flex-col shadow-2xl">
+      <div class="p-4 border-b border-outline-variant/10 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold text-on-surface">Diagnostics</h3>
+          <p class="text-[10px] uppercase tracking-widest text-on-surface-variant">IPC and Injection Events</p>
+        </div>
+        <button
+          on:click={() => diagnostics = []}
+          class="bg-surface-container-highest hover:bg-surface-container-high text-on-surface-variant px-3 py-1 rounded text-[10px] uppercase tracking-widest border border-outline-variant/20"
+        >
+          Clear
+        </button>
+      </div>
+
+      <div class="px-4 py-2 text-xs text-on-surface-variant border-b border-outline-variant/10">
+        Safe mode: <span class={safeMode ? 'text-error' : 'text-primary'}>{safeMode ? 'ON' : 'OFF'}</span>
+      </div>
+
+      <div class="flex-grow overflow-y-auto vessel-scroll p-4 space-y-3">
+        {#if diagnostics.length === 0}
+          <div class="text-sm text-outline-variant text-center mt-10">No diagnostics yet.</div>
+        {/if}
+        {#each diagnostics as entry}
+          <div class="rounded-lg border border-outline-variant/20 bg-surface-container-lowest p-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] uppercase tracking-wider {entry.level === 'warn' ? 'text-error' : 'text-primary'}">{entry.level}</span>
+              <span class="text-[10px] text-outline">{entry.time}</span>
+            </div>
+            <div class="text-xs text-on-surface mb-1">{entry.message}</div>
+            <div class="text-[10px] text-on-surface-variant">{entry.category} | {entry.appId}</div>
+            {#if entry.detail}
+              <pre class="mt-2 text-[10px] text-on-surface-variant whitespace-pre-wrap break-words">{entry.detail}</pre>
+            {/if}
           </div>
         {/each}
       </div>
