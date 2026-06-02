@@ -420,12 +420,12 @@ fn set_webview_hibernation(handle: &tauri::AppHandle, active_id: Option<&str>) {
 }
 
 #[tauri::command]
-fn get_resource_usage() -> ResourceUsage {
+async fn get_resource_usage() -> Result<ResourceUsage, String> {
     let (cpu_percent, ram_mb) = metrics::get_resource_usage_cross_platform(std::process::id());
-    ResourceUsage {
+    Ok(ResourceUsage {
         cpu_percent: (cpu_percent * 10.0).round() / 10.0,
         ram_mb,
-    }
+    })
 }
 
 #[tauri::command]
@@ -455,12 +455,12 @@ fn report_webview_error(
 }
 
 #[tauri::command]
-fn get_notifications(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<VesselNotification>, String> {
+async fn get_notifications(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<VesselNotification>, String> {
     list_notifications(&state.db_path, limit.unwrap_or(200).min(500))
 }
 
 #[tauri::command]
-fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
+async fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
     clear_notifications_db(&state.db_path)
 }
 
@@ -490,7 +490,7 @@ fn request_new_tab(app: tauri::AppHandle, app_id: String, url: String, title: Op
 }
 
 #[tauri::command]
-fn close_webview(handle: tauri::AppHandle, state: State<'_, AppState>, id: String) {
+async fn close_webview(handle: tauri::AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     if let Some(existing_wv) = handle.get_webview(&id) {
         let _ = existing_wv.close();
     }
@@ -524,10 +524,11 @@ fn close_webview(handle: tauri::AppHandle, state: State<'_, AppState>, id: Strin
     if active.as_deref() == Some(id.as_str()) {
         *active = None;
     }
+    Ok(())
 }
 
 #[tauri::command]
-fn hide_all_webviews(handle: tauri::AppHandle, state: State<'_, AppState>) {
+async fn hide_all_webviews(handle: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mut active = state
         .active_webview
         .lock()
@@ -535,10 +536,11 @@ fn hide_all_webviews(handle: tauri::AppHandle, state: State<'_, AppState>) {
     *active = None;
 
     set_webview_hibernation(&handle, None);
+    Ok(())
 }
 
 #[tauri::command]
-fn open_app(
+async fn open_app(
     window: tauri::Window,
     handle: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -861,11 +863,22 @@ fn open_app(
     Ok(())
 }
 
+#[tauri::command]
+async fn delete_app_session(state: State<'_, AppState>, app_id: String) -> Result<(), String> {
+    let app_key = sanitize_segment(&app_id, "app");
+    let path = state.sessions_root.join(&app_key);
+    if path.exists() {
+        fs::remove_dir_all(path).map_err(|e| format!("failed to delete session data: {e}"))?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
+            // ... existing setup ...
             let db_path = notification_db_path(&app.handle());
             if let Err(e) = ensure_db(&db_path) {
                 return Err(Box::<dyn std::error::Error>::from(e));
@@ -928,7 +941,8 @@ fn main() {
             clear_notifications,
             get_resource_usage,
             set_safe_mode,
-            report_webview_error
+            report_webview_error,
+            delete_app_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vessel");

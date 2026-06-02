@@ -1,8 +1,8 @@
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 pub fn get_resource_usage_cross_platform(root_pid: u32) -> (f32, u64) {
-    let mut sys = System::new_all();
-    let _ = sys.refresh_processes(ProcessesToUpdate::All, true);
+    let mut sys = System::new();
+    let _ = sys.refresh_processes(ProcessesToUpdate::All, false);
 
     let mut included = std::collections::HashSet::new();
     included.insert(Pid::from_u32(root_pid));
