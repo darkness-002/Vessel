@@ -1,7 +1,8 @@
 import { writable, get, derived } from 'svelte/store';
 import type { BrowserTab, AppConfig } from '$lib/types';
 import { invoke } from '@tauri-apps/api/core';
-import { apps, getSiteOptimizations, toDisplayName, normalizeServiceUrl } from './appStore';
+import { apps, toDisplayName, normalizeServiceUrl } from './appStore';
+import { getSiteOptimizations } from '$lib/siteOptimizations';
 import { activeId, currentView } from './uiStore';
 
 export const tabs = writable<BrowserTab[]>([]);

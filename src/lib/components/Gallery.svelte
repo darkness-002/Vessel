@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { apps, toDisplayName, persistApps, normalizeApp, newAppForm } from '$lib/stores/appStore';
+  import { apps, toDisplayName, persistApps, normalizeApp, newAppForm, buildAppId } from '$lib/stores/appStore';
   import { currentView, activeId, switchView } from '$lib/stores/uiStore';
   import { addTabForApp, switchToTab, tabs } from '$lib/stores/tabStore';
   import { diagnostics } from '$lib/stores/diagnosticStore';
@@ -73,13 +73,19 @@
     reader.readAsText(file);
   }
 
-  function deployFeatured(featured: { name: string, url: string, icon: string }) {
-    newAppForm.set({
+  async function deployFeatured(featured: { name: string, url: string, icon: string }) {
+    const id = buildAppId(featured.name);
+    const newApp = normalizeApp({
+      id,
       name: featured.name,
       url: featured.url,
       icon: featured.icon
     });
-    switchView('add-app');
+    
+    const updatedApps = [...$apps, newApp];
+    apps.set(updatedApps);
+    await persistApps(updatedApps, store);
+    await addTabForApp(newApp);
   }
 </script>
 
@@ -176,11 +182,11 @@
               </div>
               <span class="text-primary text-[9px] font-bold bg-primary/10 px-2 py-0.5 rounded uppercase tracking-widest">Featured</span>
             </div>
-            <h3 class="font-headline font-bold text-base text-on-surface/60 group-hover:text-on-surface transition-colors">Deploy {featured.name}</h3>
-            <p class="text-on-surface-variant text-[10px] mt-1 opacity-50">Quick-start template</p>
+            <h3 class="font-headline font-bold text-base text-on-surface/60 group-hover:text-on-surface transition-colors">Quick Launch {featured.name}</h3>
+            <p class="text-on-surface-variant text-[10px] mt-1 opacity-50">Instant deployment</p>
           </div>
           <div class="flex items-center gap-1 text-[10px] font-bold text-outline uppercase tracking-widest group-hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-sm">add_circle</span> Add Instance
+            <span class="material-symbols-outlined text-sm">rocket_launch</span> Add & Open
           </div>
         </button>
       {/each}

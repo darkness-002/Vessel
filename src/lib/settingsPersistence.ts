@@ -13,17 +13,3 @@ export function normalizeFeatures(input: Partial<AppFeaturesSnapshot> | undefine
     injectionAllowlist: input?.injectionAllowlist || ''
   };
 }
-
-export function serializeAppsBackup<T>(apps: T[]): string {
-  return JSON.stringify(apps);
-}
-
-export function deserializeAppsBackup<T>(raw: string | null): T[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}

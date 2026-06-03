@@ -4,11 +4,9 @@
   import { listen } from "@tauri-apps/api/event"; 
   import { load } from "@tauri-apps/plugin-store";
   import { goto } from "$app/navigation";
-  import { deserializeAppsBackup, serializeAppsBackup } from "$lib/settingsPersistence";
 
-  // Stores
   import { apps, normalizeApp, persistApps, editingApp, initialSettingsState } from "$lib/stores/appStore";
-  import { tabs, activeTabId, addTabForApp, switchToTab } from "$lib/stores/tabStore";
+  import { tabs, activeTabId, addTabForApp, switchToTab, openTab } from "$lib/stores/tabStore";
   import { currentView, activeId, showBrain, showDiagnostics, showShortcuts, safeMode, showPerformanceStats, updateViewport, switchView, toggleBrain, toggleDiagnostics, setPerformanceStats, setSafeMode } from "$lib/stores/uiStore";
   import { notifications, unreadCount } from "$lib/stores/notificationStore";
   import { diagnostics } from "$lib/stores/diagnosticStore";
@@ -23,7 +21,7 @@
   import DiagnosticsPanel from "$lib/components/DiagnosticsPanel.svelte";
   import ShortcutOverlay from "$lib/components/ShortcutOverlay.svelte";
 
-  import type { AppConfig, VesselNotification, NewTabEvent, DiagnosticEvent } from "$lib/types";
+  import type { AppConfig, VesselNotification, NewTabEvent, DiagnosticEvent, BrowserTab } from "$lib/types";
 
   let store: any;
   let storeReady = false;
@@ -55,10 +53,6 @@
     switchView('gallery');
   }
 
-  function loadAppsBackup() {
-    return deserializeAppsBackup<AppConfig>(localStorage.getItem('vessel_apps_backup'));
-  }
-
   onMount(() => {
     let unlisten = () => {};
     let isUnmounted = false;
@@ -70,17 +64,16 @@
     (async () => {
       store = await load('vessel_settings.json', { autoSave: true, defaults: {} });
       storeReady = true;
+
+      // Load Apps
       const savedApps = await store.get('apps');
-      const backupApps = loadAppsBackup();
-      const storeApps = Array.isArray(savedApps) ? (savedApps as AppConfig[]) : [];
-      const rawApps = storeApps.length >= backupApps.length ? storeApps : backupApps;
-      
+      const rawApps = Array.isArray(savedApps) ? (savedApps as AppConfig[]) : [];
       const normalizedApps = rawApps.map((app) => normalizeApp(app as any));
+      
       if (!isUnmounted) {
         apps.set(normalizedApps);
       }
       
-      const needsSync = storeApps.length !== backupApps.length;
       const needsMigration = rawApps.some((app: any) =>
         !app.features
           || app.features.profile === undefined
@@ -90,11 +83,43 @@
           || app.features.idleSleepSeconds === undefined
       );
 
-      if (!savedApps || needsMigration || needsSync) {
+      if (!savedApps || needsMigration) {
         await persistApps(normalizedApps, store);
-      } else {
-        localStorage.setItem('vessel_apps_backup', serializeAppsBackup(normalizedApps));
       }
+
+      // Load Session (Tabs)
+      const savedTabs = await store.get('saved_tabs');
+      const savedActiveTabId = await store.get('active_tab_id');
+
+      if (Array.isArray(savedTabs) && savedTabs.length > 0) {
+        tabs.set(savedTabs as BrowserTab[]);
+        if (savedActiveTabId && typeof savedActiveTabId === 'string') {
+          const activeTab = (savedTabs as BrowserTab[]).find(t => t.id === savedActiveTabId);
+          if (activeTab) {
+            const app = normalizedApps.find(a => a.id === activeTab.appId);
+            if (app) {
+              activeTabId.set(activeTab.id);
+              activeId.set(app.id);
+              currentView.set('webview');
+              // Lazy load: only open the active tab
+              await openTab(app, activeTab);
+            }
+          }
+        }
+      }
+
+      // Session Persistence Subscriptions
+      const unsubTabs = tabs.subscribe(async (currentTabs) => {
+        if (storeReady && !isUnmounted) {
+          await store.set('saved_tabs', currentTabs);
+        }
+      });
+
+      const unsubActiveTab = activeTabId.subscribe(async (currentId) => {
+        if (storeReady && !isUnmounted) {
+          await store.set('active_tab_id', currentId);
+        }
+      });
 
       const storedPerf = await store.get('showPerformanceStats');
       if (!isUnmounted) {
@@ -131,6 +156,8 @@
         unlistenNotif();
         unlistenTabs();
         unlistenDiagnostics();
+        unsubTabs();
+        unsubActiveTab();
       };
     })();
 

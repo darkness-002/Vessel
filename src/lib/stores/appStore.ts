@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import type { AppConfig } from '$lib/types';
-import { serializeAppsBackup, normalizeFeatures } from '$lib/settingsPersistence';
+import { normalizeFeatures } from '$lib/settingsPersistence';
 import { invoke } from '@tauri-apps/api/core';
 
 export const apps = writable<AppConfig[]>([]);
@@ -54,8 +54,6 @@ export function normalizeApp(input: Partial<AppConfig> & { id: string; icon: str
 }
 
 export async function persistApps(nextApps: AppConfig[], store: any) {
-  localStorage.setItem('vessel_apps_backup', serializeAppsBackup(nextApps));
-
   if (!store) return;
   try {
     await store.set('apps', nextApps);
@@ -63,7 +61,7 @@ export async function persistApps(nextApps: AppConfig[], store: any) {
       await store.save();
     }
   } catch (error) {
-    console.error('Failed to persist apps in store, backup kept in localStorage', error);
+    console.error('Failed to persist apps in store', error);
   }
 }
 
@@ -71,53 +69,3 @@ export function toDisplayName(app: AppConfig) {
   return app.name || app.id.replace(/-/g, ' ');
 }
 
-export function getSiteOptimizations(targetUrl: string) {
-  const url = targetUrl.toLowerCase();
-
-  if (url.includes('open.spotify.com') || url.includes('spotify.com')) {
-    return {
-      css: `
-        .Root__top-container,
-        .Root__nav-bar,
-        .main-globalNav-searchContainer,
-        .main-home-filterChipsSection {
-          backdrop-filter: none !important;
-        }
-
-        [data-testid="context-menu"],
-        [data-testid="yolo-highlight-snippet"],
-        .encore-light-theme,
-        #onetrust-banner-sdk,
-        #onetrust-consent-sdk {
-          z-index: 1 !important;
-        }
-
-        .main-nowPlayingBar-nowPlayingBar {
-          contain: layout style paint;
-        }
-      `,
-      js: `
-        (() => {
-          const dismissSpotifyNoise = () => {
-            const selectors = [
-              '#onetrust-accept-btn-handler',
-              'button[data-testid="cookie-banner-accept-button"]',
-              'button[aria-label="Close"]'
-            ];
-            for (const selector of selectors) {
-              const button = document.querySelector(selector);
-              if (button) {
-                try { button.click(); } catch {}
-              }
-            }
-          };
-
-          dismissSpotifyNoise();
-          setInterval(dismissSpotifyNoise, 3000);
-        })();
-      `
-    };
-  }
-
-  return { css: '', js: '' };
-}
