@@ -19,7 +19,7 @@ Users can inject custom CSS and JS.
 
 ## 4. Encryption
 - **Current State:** Data at rest (SQLite and JSON settings) is currently **unencrypted**. 
-- **Roadmap:** Implementation of native keychain/os-level encryption for sensitive tokens is planned for the v0.2.0 milestone.
+- **Roadmap:** Implementation of native keychain/os-level encryption for sensitive tokens is planned for the **v0.2.0 milestone (Estimated Q3 2026)**.
 
 ## 5. Hibernation Engine
 To save resources, Vessel "freezes" background webviews.

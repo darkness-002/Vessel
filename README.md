@@ -11,6 +11,16 @@ Vessel is a desktop web app container built with SvelteKit and Tauri. It lets yo
 - Supports custom CSS, themes, and site-specific tweaks
 - Includes background hibernation for inactive webviews
 
+## Security & Isolation
+
+Vessel is designed with a multi-layered security model to protect your data across isolated instances.
+
+- **Process Isolation:** Each app instance runs in its own native webview with a partitioned session directory.
+- **CSP Design:** The application enforces a strict Content Security Policy. We utilize `'unsafe-inline'` and `'unsafe-eval'` specifically to support user-defined JS/CSS injection and site-specific performance optimizations. These are scoped to the webview and shielded from the core IPC layer.
+- **Data Locality:** All app settings, notification history, and session data are stored locally on your machine. No telemetry or user data is transmitted to external servers.
+
+For a detailed breakdown, see [SECURITY.md](./SECURITY.md).
+
 ## Tech Stack
 
 - SvelteKit + TypeScript

@@ -1,0 +1,79 @@
+VESSEL: CODE ARCHITECTURE & LOGIC GUIDE
+========================================
+
+Vessel is a "Web App Container" that uses a Polyglot architecture:
+- Rust (Backend): Handles the heavy lifting, system safety, and process management.
+- Svelte/TypeScript (Frontend): Handles the user interface and state.
+
+This document explains the core files and what the code inside them actually does.
+
+---
+
+1. THE BACKEND (Rust - src-tauri/src/)
+======================================
+
+File: main.rs (The Brain)
+-------------------------
+This is the entry point of the entire application.
+- State Management: It tracks which webviews are active, which are sleeping (hibernating), and where their data is stored on your hard drive.
+- Webview Orchestration: Unlike a normal browser, this code manually creates and destroys "Containers" (webviews).
+- Hibernation Logic: It contains a timer that checks if a window is hidden. If it is, it sends a message to "freeze" that process to save your CPU and RAM.
+- SQLite Integration: Manages the 'vessel.db' to store your notifications locally.
+
+File: security.rs (The Shield)
+------------------------------
+- Validation: Every time you try to inject custom CSS or JS into an app, this file scans the text.
+- Blocklist: It looks for dangerous patterns (like trying to access your computer's files) and blocks the script if it looks malicious.
+- CSP: Defines the "Content Security Policy" which acts as a wall between the web and your computer.
+
+File: web_scripts.rs (The Bridge)
+---------------------------------
+- Script Injection: This file contains the JavaScript code that Vessel "injects" into sites like YouTube or Spotify.
+- Notification Hijacking: It includes a script that "catches" website notifications and forwards them to the Rust backend so they show up in your "Brain" panel.
+
+---
+
+2. THE FRONTEND (Svelte/TS - src/lib/)
+======================================
+
+File: stores/appStore.ts (App Logic)
+------------------------------------
+- Data Persistence: This is where the code for saving your added apps lives. It talks to the Tauri Store to make sure your apps are still there when you restart.
+- Normalization: Ensures that if you enter a messy URL (like "spotify.com"), it gets cleaned up to "https://open.spotify.com/".
+
+File: stores/tabStore.ts (Tab Management)
+-----------------------------------------
+- Navigation Logic: This handles the logic for opening new tabs, switching between them, and closing them.
+- Lazy Loading: It contains the logic that tells the backend: "Only load this tab's webview when the user actually clicks on it."
+
+File: stores/uiStore.ts (Interface State)
+-----------------------------------------
+- UI Toggles: Controls whether the "Brain" panel, "Diagnostics", or "Settings" are visible.
+- Performance Polling: Every few seconds, it asks the Rust backend for CPU/RAM usage and updates the bar at the bottom.
+
+File: siteOptimizations.ts (The Tweaks)
+---------------------------------------
+- Custom Fixes: This is a "recipe book" of CSS and JS fixes for specific sites. For example, it contains the code to hide the cookie banners on Spotify or ad-blockers for video sites.
+
+---
+
+3. THE ENTRY POINT (src/routes/)
+================================
+
+File: +page.svelte (The Controller)
+-----------------------------------
+- Orchestration: This is the main UI wrapper. When the app starts, this file:
+  1. Loads your saved apps from the disk.
+  2. Restores your last session (open tabs).
+  3. Starts the listeners for system events (like new notifications).
+
+---
+
+SUMMARY OF HOW IT WORKS (The "Flow")
+====================================
+
+1. YOU CLICK AN APP: The `Gallery.svelte` tells `tabStore.ts` to add a tab.
+2. BACKEND SPINS UP: `tabStore.ts` calls a Rust command in `main.rs` (`open_app`).
+3. ISOLATION: Rust creates a new webview with its own private folder so your cookies don't leak.
+4. INJECTION: Rust looks at `siteOptimizations.ts`, grabs the CSS/JS for that site, and injects it.
+5. HIBERNATION: If you switch to another app, `main.rs` detects the window is hidden and "hibernates" it to save your battery.

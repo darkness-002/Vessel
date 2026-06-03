@@ -1,0 +1,23 @@
+name: Feature Request
+description: Suggest an idea for Vessel
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: feature
+    attributes:
+      label: Description of the Feature
+      description: What should Vessel do that it doesn't do now?
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why is this feature needed?
+      description: Explain the use case for this feature.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you considered any workarounds?

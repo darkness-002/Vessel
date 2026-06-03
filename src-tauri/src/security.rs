@@ -52,8 +52,12 @@ pub fn validate_js_payload(js: &str) -> Result<(), String> {
         "xmlhttprequest",
         "websocket(",
         "import(",
-        "function(",
         "eval(",
+        "new function",
+        "setTimeout('",
+        "setTimeout(\"",
+        "setInterval('",
+        "setInterval(\"",
     ];
 
     for pattern in blocked_patterns {

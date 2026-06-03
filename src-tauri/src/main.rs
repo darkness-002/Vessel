@@ -39,8 +39,10 @@ struct AppState {
     active_webview: Mutex<Option<String>>,
     hibernate_tokens: Mutex<HashMap<String, u64>>,
     safe_mode: Mutex<bool>,
+    notification_rate_limit: Mutex<HashMap<String, (u32, i64)>>,
 }
 
+const MAX_NOTIFICATIONS_PER_MINUTE: u32 = 10;
 const WEBVIEW_DESTROY_TIMEOUT_SECONDS: u64 = 600;
 
 #[derive(Debug, Serialize)]
@@ -472,6 +474,23 @@ fn forward_notification(
     title: String,
     body: String,
 ) {
+    let now = Local::now().timestamp();
+    {
+        let mut limits = state.notification_rate_limit.lock().expect("notification_rate_limit lock poisoned");
+        let (count, timestamp) = limits.entry(app_id.clone()).or_insert((0, now));
+        
+        if now - *timestamp > 60 {
+            *count = 1;
+            *timestamp = now;
+        } else {
+            *count += 1;
+        }
+
+        if *count > MAX_NOTIFICATIONS_PER_MINUTE {
+            return;
+        }
+    }
+
     let note = VesselNotification {
         app_id,
         title,
@@ -895,6 +914,7 @@ fn main() {
                 active_webview: Mutex::new(None),
                 hibernate_tokens: Mutex::new(HashMap::new()),
                 safe_mode: Mutex::new(false),
+                notification_rate_limit: Mutex::new(HashMap::new()),
             });
 
             let Some(main_webview_win) = app.get_webview_window("main") else {
