@@ -1,0 +1,43 @@
+name: Vessel CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Frontend Check
+      run: npm run check
+
+    - name: Frontend Tests
+      run: npm test
+
+    - name: Rust Check
+      run: cd src-tauri && cargo check
+
+    - name: Rust Tests
+      run: cd src-tauri && cargo test
+
+    - name: Build Desktop App
+      run: npm run tauri build -- --no-bundle
+      env:
+        CI: true
