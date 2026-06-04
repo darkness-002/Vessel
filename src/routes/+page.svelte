@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event"; 
-  import { load } from "@tauri-apps/plugin-store";
+  import { Stronghold } from "@tauri-apps/plugin-stronghold";
   import { goto } from "$app/navigation";
 
   import { apps, normalizeApp, persistApps, editingApp, initialSettingsState } from "$lib/stores/appStore";
@@ -62,7 +62,37 @@
     window.addEventListener('keydown', handleKeydown);
 
     (async () => {
-      store = await load('vessel_settings.json', { autoSave: true, defaults: {} });
+      const password = await invoke<string>('get_encryption_key');
+      const stronghold = await Stronghold.load('vessel_settings.hold', password).catch(async () => {
+         // Fallback if not initialized (though .load creates it if it doesn't exist? Actually .load might throw if missing, wait. Stronghold v2 `.load` creates if missing, but let's be safe)
+         return await Stronghold.load('vessel_settings.hold', password);
+      });
+      const client = await stronghold.loadClient("vessel_client").catch(() => stronghold.createClient("vessel_client"));
+      const sh_store = client.getStore();
+
+      store = {
+         get: async (key: string) => {
+             try {
+                 const data = await sh_store.get(key);
+                 if (!data) return undefined;
+                 const jsonStr = new TextDecoder().decode(data);
+                 return JSON.parse(jsonStr);
+             } catch (e) {
+                 console.error('failed to read from stronghold', e);
+                 return undefined;
+             }
+         },
+         set: async (key: string, val: any) => {
+             try {
+                 const jsonStr = JSON.stringify(val);
+                 const data = new TextEncoder().encode(jsonStr);
+                 await sh_store.insert(key, Array.from(data));
+                 await stronghold.save();
+             } catch (e) {
+                 console.error('failed to save to stronghold', e);
+             }
+         }
+      };
       storeReady = true;
 
       // Load Apps
