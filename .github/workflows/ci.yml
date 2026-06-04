@@ -9,7 +9,9 @@ on:
 jobs:
   test-and-build:
     runs-on: windows-latest
-    
+    env:
+      OPENSSL_DIR: C:\Program Files\OpenSSL-Win64
+
     steps:
     - uses: actions/checkout@v4
 
