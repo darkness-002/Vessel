@@ -39,13 +39,11 @@
             title={tab.url}
           >
             <span class="truncate">{shortenTabTitle(tab.title)}</span>
-            {#if $visibleTabs.length > 1}
-              <button
-                type="button"
-                class="material-symbols-outlined text-sm opacity-60 group-hover:opacity-100"
-                on:click|stopPropagation={() => closeTab(tab.id)}
-              >close</button>
-            {/if}
+            <button
+              type="button"
+              class="material-symbols-outlined text-sm opacity-60 group-hover:opacity-100"
+              on:click|stopPropagation={() => closeTab(tab.id)}
+            >close</button>
           </div>
         {/each}
       </div>

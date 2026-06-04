@@ -22,8 +22,12 @@ pub fn wake_webview(handle: &tauri::AppHandle, label: &str) {
 }
 
 pub fn destroy_inactive_webview(handle: &tauri::AppHandle, label: &str) {
+    println!("  destroy_inactive_webview(label: {})", label);
     if let Some(wv) = handle.get_webview(label) {
+        println!("    Found webview, calling close()");
         let _ = wv.close();
+    } else {
+        println!("    Webview NOT found by label");
     }
 
     let state = handle.state::<AppState>();
@@ -222,9 +226,16 @@ pub fn orchestrate_app_webview(
     injection_allowlist: Option<Vec<String>>,
     idle_sleep_seconds: Option<u64>,
 ) -> Result<(), String> {
-    let root_app_id = app_id.unwrap_or_else(|| id.clone());
+    println!("orchestrate_app_webview(id: {}, app_id: {:?})", id, app_id);
+    let root_app_id = app_id.clone().unwrap_or_else(|| {
+        println!("  WARNING: app_id was None, using id as root_app_id");
+        id.clone()
+    });
     let app_key = sanitize_segment(&root_app_id, "app");
     let profile_name = sanitize_segment(profile.as_deref().unwrap_or("default"), "default");
+    
+    println!("  Resolved app_key: {}, profile: {}", app_key, profile_name);
+
     let notification_script = web_scripts::notification_hijack_script(&root_app_id);
     let tab_script = web_scripts::new_tab_bridge_script(&root_app_id);
     let external_url = parse_external_url(&url)?;
@@ -238,11 +249,17 @@ pub fn orchestrate_app_webview(
     let expected_profile = format!("{app_key}:{profile_name}");
     let should_recreate = {
         let profiles = state.active_profiles.lock().expect("active_profiles lock poisoned");
-        profiles.get(&id).map(|saved| saved != &expected_profile).unwrap_or(false)
+        let current = profiles.get(&id);
+        let mismatch = current.map(|saved| saved != &expected_profile).unwrap_or(false);
+        if mismatch {
+            println!("  Profile mismatch detected: current={:?}, expected={}", current, expected_profile);
+        }
+        mismatch
     };
 
     if should_recreate {
         if let Some(existing_wv) = handle.get_webview(&id) {
+            println!("  Closing existing webview for recreation");
             let _ = existing_wv.close();
         }
     }
@@ -275,6 +292,7 @@ pub fn orchestrate_app_webview(
     set_webview_hibernation(&handle, Some(&id));
 
     if let Some(existing_wv) = handle.get_webview(&id) {
+        println!("  Found existing webview, updating bounds and scripts");
         if let Some((_, _, rect)) = compute_webview_bounds(&window) {
             let _ = existing_wv.set_bounds(rect);
         }
@@ -318,6 +336,7 @@ pub fn orchestrate_app_webview(
         return Ok(());
     }
 
+    println!("  Creating new webview child");
     let Some((logical_pos, logical_size, _)) = compute_webview_bounds(&window) else {
         return Err("unable to compute webview bounds".to_string());
     };
@@ -330,6 +349,7 @@ pub fn orchestrate_app_webview(
         .join(&app_key)
         .join(&profile_name);
     let _ = fs::create_dir_all(&session_dir);
+    println!("  Session directory: {:?}", session_dir);
     builder = builder.data_directory(session_dir);
 
     builder = builder.initialization_script(web_scripts::stealth_injection_script());

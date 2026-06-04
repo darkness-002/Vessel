@@ -36,6 +36,7 @@ function nextTabId(appId: string) {
 }
 
 export async function openTab(app: AppConfig, tab: BrowserTab) {
+  console.log('openTab called for tab:', tab.id, 'app:', app.id);
   const siteOptimizations = getSiteOptimizations(tab.url);
   const jsToInject = app.features?.adblock && app.url.includes("youtube.com")
     ? `setInterval(() => { const skipBtn = document.querySelector('.ytp-skip-ad-button'); if(skipBtn) skipBtn.click(); }, 500);`
@@ -53,6 +54,7 @@ export async function openTab(app: AppConfig, tab: BrowserTab) {
       .map((item) => item.trim())
       .filter(Boolean);
 
+    console.log('Invoking open_app for:', tab.id);
     await invoke("open_app", {
       id: tab.id,
       appId: app.id,
@@ -65,6 +67,7 @@ export async function openTab(app: AppConfig, tab: BrowserTab) {
       injectionAllowlist: allowlist,
       idleSleepSeconds: Number(app.features.idleSleepSeconds || 0)
     });
+    console.log('open_app success for:', tab.id);
     return { ok: true as const };
   } catch (error) {
     console.error('Failed to open tab webview', error);
@@ -73,13 +76,29 @@ export async function openTab(app: AppConfig, tab: BrowserTab) {
 }
 
 export async function switchToTab(tabId: string) {
+  console.log('switchToTab:', tabId);
+  const $activeTabId = get(activeTabId);
+  const $currentView = get(currentView);
+
+  // If already active and in webview mode, skip to avoid redundant IPC calls
+  if ($activeTabId === tabId && $currentView === 'webview') {
+    console.log('Tab is already active and visible, skipping redundant switch.');
+    return { ok: true as const };
+  }
+
   const $tabs = get(tabs);
   const tab = $tabs.find((item) => item.id === tabId);
-  if (!tab) return { ok: false as const };
+  if (!tab) {
+    console.warn('switchToTab failed: tab not found', tabId);
+    return { ok: false as const };
+  }
   
   const $apps = get(apps);
   const app = $apps.find((item) => item.id === tab.appId);
-  if (!app) return { ok: false as const };
+  if (!app) {
+    console.warn('switchToTab failed: app not found', tab.appId);
+    return { ok: false as const };
+  }
 
   activeTabId.set(tab.id);
   activeId.set(app.id);
@@ -116,15 +135,27 @@ export async function addTabForApp(app: AppConfig, url?: string, title?: string)
 }
 
 export async function closeTab(tabId: string) {
+  console.log('closeTab:', tabId);
   const $tabs = get(tabs);
   const tab = $tabs.find((item) => item.id === tabId);
-  if (!tab) return;
+  if (!tab) {
+    console.warn('closeTab failed: tab not found', tabId);
+    return;
+  }
 
-  await invoke('close_webview', { id: tab.id });
+  console.log('Invoking close_webview for:', tab.id);
+  try {
+    await invoke('close_webview', { id: tab.id });
+    console.log('close_webview success for:', tab.id);
+  } catch (e) {
+    console.error('Failed to close webview', tab.id, e);
+  }
+
   tabs.update($tabs => $tabs.filter((item) => item.id !== tabId));
 
   const $newTabs = get(tabs);
   if ($newTabs.length === 0) {
+    console.log('No tabs left, returning to gallery');
     activeTabId.set('');
     activeId.set('');
     currentView.set('gallery');
@@ -132,6 +163,7 @@ export async function closeTab(tabId: string) {
   }
 
   if (get(activeTabId) === tabId) {
+    console.log('Active tab closed, switching to another...');
     const sameAppTabs = $newTabs.filter((item) => item.appId === tab.appId);
     if (sameAppTabs.length > 0) {
       await switchToTab(sameAppTabs[sameAppTabs.length - 1].id);

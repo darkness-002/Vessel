@@ -60,29 +60,58 @@
   async function deleteInstance() {
     if (!$editingApp) return;
     const appIdToDelete = $editingApp.id;
-    if (!confirm(`Are you sure you want to discard "${toDisplayName($editingApp)}" and ALL its session data? This cannot be undone.`)) return;
+    const displayName = toDisplayName($editingApp);
+
+    console.log('[Discard] Starting discard process for:', appIdToDelete);
+
+    if (!confirm(`Are you sure you want to discard "${displayName}" and ALL its session data? This cannot be undone.`)) {
+      console.log('[Discard] User cancelled confirmation');
+      return;
+    }
 
     try {
-      // 1. Close any active tabs for this app
+      isSaving.set(true);
+
+      // 1. Remove from apps list and persist IMMEDIATELY
+      // This ensures the sidebar updates even if other steps are slow
+      console.log('[Discard] Step 1: Removing from apps list');
+      const updatedApps = $apps.filter(a => a.id !== appIdToDelete);
+      apps.set(updatedApps);
+
+      // 2. Close any active tabs for this app
       const relatedTabs = $tabs.filter(t => t.appId === appIdToDelete);
+      console.log(`[Discard] Step 2: Closing ${relatedTabs.length} active tabs`);
       for (const tab of relatedTabs) {
-        await invoke('close_webview', { id: tab.id });
+        try {
+          console.log('[Discard] Closing webview:', tab.id);
+          await invoke('close_webview', { id: tab.id });
+        } catch (e) {
+          console.warn('[Discard] Failed to close webview during discard:', tab.id, e);
+        }
       }
       tabs.update($t => $t.filter(t => t.appId !== appIdToDelete));
 
-      // 2. Clear session data from disk
-      await invoke('delete_app_session', { appId: appIdToDelete });
-
-      // 3. Remove from apps list and persist
-      const updatedApps = $apps.filter(a => a.id !== appIdToDelete);
-      apps.set(updatedApps);
+      // 3. Persist the updated apps list to Stronghold
+      console.log('[Discard] Step 3: Persisting updated workspace');
       await persistApps(updatedApps, store);
 
       // 4. Return to gallery
+      console.log('[Discard] Step 4: Returning to gallery view');
       switchView('gallery');
+
+      // 5. Clear session data from disk (non-blocking background task)
+      console.log('[Discard] Step 5: Requesting background session cleanup for:', appIdToDelete);
+      invoke('delete_app_session', { appId: appIdToDelete })
+        .then(() => console.log('[Discard] Backend session cleanup successful'))
+        .catch(error => console.warn('[Discard] Backend session cleanup failed (likely file locks):', error));
+
+      console.log('[Discard] Discard process completed successfully on frontend');
+
     } catch (error) {
-      console.error('Failed to delete instance', error);
-      alert('Failed to delete instance data. See console for details.');
+      console.error('[Discard] CRITICAL ERROR during discard:', error);
+      alert('Failed to completely discard instance. Please check the console for details.');
+    } finally {
+      isSaving.set(false);
     }
   }
 
@@ -171,9 +200,15 @@
         <div class="mt-auto px-6 py-8 border-t border-outline-variant/10">
           <button 
             on:click={deleteInstance}
-            class="w-full py-2 bg-error/10 text-error hover:bg-error/20 rounded border border-error/30 transition-all font-label text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2"
+            class="w-full py-2 bg-error/10 text-error hover:bg-error/20 rounded border border-error/30 transition-all font-label text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-30"
+            disabled={$isSaving}
           >
-            <span class="material-symbols-outlined text-sm">delete_forever</span> Discard Instance
+            {#if $isSaving}
+              <span class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+            {:else}
+              <span class="material-symbols-outlined text-sm">delete_forever</span>
+            {/if}
+            Discard Instance
           </button>
           <p class="text-[9px] text-outline-variant mt-3 italic leading-tight">Removes instance from gallery and wipes all cookies/data from disk.</p>
         </div>

@@ -68,7 +68,7 @@ pub fn set_safe_mode(state: State<'_, AppState>, enabled: bool) {
     *safe_mode = enabled;
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub fn report_webview_error(
     app: tauri::AppHandle,
     app_id: String,
@@ -103,7 +103,7 @@ pub async fn clear_notifications(state: State<'_, AppState>) -> Result<(), Strin
     db::clear_notifications_db(&state.db_path)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub fn forward_notification(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -139,14 +139,15 @@ pub fn forward_notification(
     let _ = app.emit("vessel-notification", &note);
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub fn request_new_tab(app: tauri::AppHandle, app_id: String, url: String, title: Option<String>) {
     let payload = NewTabRequest { app_id, url, title };
     let _ = app.emit("vessel-open-tab", payload);
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn close_webview(handle: tauri::AppHandle, id: String) -> Result<(), String> {
+    println!("Command: close_webview(id: {})", id);
     webview::destroy_inactive_webview(&handle, &id);
     
     let state = handle.state::<AppState>();
@@ -155,6 +156,7 @@ pub async fn close_webview(handle: tauri::AppHandle, id: String) -> Result<(), S
         .lock()
         .expect("active_webview lock poisoned");
     if active.as_deref() == Some(id.as_str()) {
+        println!("  Resetting active_webview from {}", id);
         *active = None;
     }
     Ok(())
@@ -172,7 +174,7 @@ pub async fn hide_all_webviews(handle: tauri::AppHandle, state: State<'_, AppSta
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn open_app(
     window: tauri::Window,
     handle: tauri::AppHandle,
@@ -188,6 +190,7 @@ pub async fn open_app(
     injection_allowlist: Option<Vec<String>>,
     idle_sleep_seconds: Option<u64>,
 ) -> Result<(), String> {
+    println!("Command: open_app(id: {}, app_id: {:?})", id, app_id);
     webview::orchestrate_app_webview(
         window,
         handle,
@@ -205,12 +208,35 @@ pub async fn open_app(
     )
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn delete_app_session(state: State<'_, AppState>, app_id: String) -> Result<(), String> {
+    println!("Command: delete_app_session(app_id: {})", app_id);
     let app_key = crate::state::sanitize_segment(&app_id, "app");
     let path = state.sessions_root.join(&app_key);
+    println!("  Deleting session path: {:?}", path);
+    
     if std::fs::metadata(&path).is_ok() {
-        std::fs::remove_dir_all(path).map_err(|e| format!("failed to delete session data: {e}"))?;
+        let mut last_err = String::new();
+        // Be more patient: 10 retries with 500ms backoff = up to 5 seconds
+        for i in 0..10 {
+            if i > 0 {
+                println!("  Retry {}/10...", i);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            match std::fs::remove_dir_all(&path) {
+                Ok(_) => {
+                    println!("  Successfully deleted session data.");
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = format!("{e}");
+                    println!("  Attempt {} failed: {}", i + 1, last_err);
+                }
+            }
+        }
+        return Err(format!("failed to delete session data after 10 retries: {}", last_err));
+    } else {
+        println!("  Path does not exist, skipping deletion.");
     }
     Ok(())
 }
