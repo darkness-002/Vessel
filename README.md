@@ -1,38 +1,54 @@
 # Vessel
 
-Vessel is a desktop web app container built with SvelteKit and Tauri. It lets you create isolated app instances for sites like YouTube, Gmail, Spotify, Slack, and other web apps, while keeping each instance in its own webview and session profile.
+Vessel is a minimal, decoupled desktop web app container engine built with Tauri v2 and SvelteKit. It turns web applications (such as ChatGPT, Linear, Slack, GitHub, and Notion) into standalone desktop apps, each running in a dedicated native window with an isolated profile directory.
 
-## What it does
+---
 
-- Launches websites as isolated desktop containers
-- Keeps separate tabs and profiles per instance
-- Persists deployments across reloads and restarts
-- Captures notifications into the in-app Brain panel
-- Supports custom CSS, themes, and site-specific tweaks
-- Includes background hibernation for inactive webviews
+## Architectural Design
 
-## Security & Isolation
+Vessel implements a **Decoupled Manager-Container Architecture**:
 
-Vessel is designed with a multi-layered security model to protect your data across isolated instances.
+1. **Manager Mode (`vessel`)**:
+   - Running `vessel` without arguments boots the native Manager GUI.
+   - Built to Raycast/Linear desktop standards using lightweight HTML, Tailwind CSS, and SvelteKit.
+   - Manage installed web apps, trigger in-app launches, create native desktop shortcuts, and wipe sandboxes.
 
-- **Process Isolation:** Each app instance runs in its own native webview with a partitioned session directory.
-- **CSP Design:** The application enforces a strict Content Security Policy. We utilize `'unsafe-inline'` and `'unsafe-eval'` specifically to support user-defined JS/CSS injection and site-specific performance optimizations. These are scoped to the webview and shielded from the core IPC layer.
-- **Data Locality:** All app settings, notification history, and session data are stored locally on your machine. No telemetry or user data is transmitted to external servers.
+2. **Container Mode (`vessel --run-container <ID>`)**:
+   - Running `vessel --run-container <ID>` boots **only** a native `WebviewWindow` pointing directly to the target external URL with its isolated data directory.
+   - **The Manager DOM is never loaded or rendered in this mode**, keeping memory overhead minimal and startup instantaneous.
+   - Single-instance IPC forwards secondary launches directly to the running process without socket overhead or process duplication.
 
-For a detailed breakdown, see [SECURITY.md](./SECURITY.md).
+---
+
+## Profile & Storage Isolation
+
+Cookies, cache, localStorage, indexedDB, and service workers are strictly partitioned per container on the filesystem:
+
+* **Windows**: `%LOCALAPPDATA%\Vessel\profiles\<CONTAINER_ID>`
+* **macOS**: `~/Library/Application Support/Vessel/profiles/<CONTAINER_ID>`
+* **Linux**: `~/.local/share/Vessel/profiles/<CONTAINER_ID>`
+
+Container profiles and cached icons are configured through:
+* Registry: `<VESSEL_ROOT>/profiles.json`
+* Cached Icons: `<VESSEL_ROOT>/icons/<CONTAINER_ID>.png`
+
+---
+
+## Core Features
+
+* **Desktop Shortcuts**: Generate native `.lnk` shortcuts (Windows) or `.command` scripts (macOS) pointing directly to `vessel --run-container <ID>` with the container's cached icon.
+* **Auto Title & Favicon Extraction**: Automatically fetches high-resolution site favicons and parses service titles when installing web apps.
+* **Zero Bloat**: No simulated multi-window DOM systems, no background telemetry daemons, and no heavy runtime dependencies.
+* **Strict Security Sandboxing**: Tauri IPC capabilities are scoped strictly to the Manager window; external container webviews have zero Tauri IPC permissions.
+
+---
 
 ## Tech Stack
 
-- SvelteKit + TypeScript
-- Tauri 2
-- Rust backend
-- Tailwind CSS
+* **Frontend**: SvelteKit, TypeScript, Tailwind CSS, Vite
+* **Backend**: Rust, Tauri v2, `tauri-plugin-single-instance`, `tauri-plugin-opener`
 
-## Requirements
-
-- Node.js 18 or newer
-- Rust toolchain via `rustup`
-- macOS, Windows, or Linux with Tauri prerequisites installed
+---
 
 ## Development
 
@@ -42,59 +58,32 @@ Install dependencies:
 npm install
 ```
 
-Run the app in development mode:
+Run in development mode:
 
 ```bash
 npm run tauri dev
 ```
 
-Run frontend checks:
+Run frontend type and diagnostic checks:
 
 ```bash
 npm run check
 ```
 
-Build a production release:
+Run unit tests:
+
+```bash
+npm test
+cd src-tauri && cargo test
+```
+
+Build production executable:
 
 ```bash
 npm run tauri build
 ```
 
-## Build Ready
-
-Vessel is set up for production builds with the current Tauri configuration and has been verified with a successful release build.
-
-Build flow:
-
-1. Install dependencies with `npm install`
-2. Run checks with `npm run check`
-3. Build the production app with `npm run tauri build`
-
-Build output on macOS:
-
-```bash
-src-tauri/target/release/bundle/macos/vessel.app
-```
-
-If you want to open the built app directly:
-
-```bash
-open src-tauri/target/release/bundle/macos/vessel.app
-```
-
-## Project Structure
-
-- `src/` - Svelte UI and styling
-- `src-tauri/` - Rust backend, Tauri config, and app bundle setup
-- `build/` - Static frontend output generated by Vite/SvelteKit
-
-## Notes
-
-- The app uses a persistent store plus localStorage backup to keep deployments safe across reloads.
-- Background tabs are hibernated and eventually destroyed to reduce RAM usage.
-- Some services may require site-specific tweaks through the settings panel.
-
-## Recommended IDE Setup
+---
 
 ## License
 

@@ -1,27 +1,40 @@
-# Security Model & Architecture
+# Security & Isolation Model
 
-## 1. Process & Data Isolation
-Vessel implements strict isolation between application instances to prevent session leakage and cross-site scripting (XSS) contamination.
+Vessel implements a defense-in-depth isolation model designed to keep web applications, cookies, and authentication tokens strictly separated from one another and from the host operating system.
 
-- **Storage Isolation:** Each deployed app is assigned a unique `sessions_root` subdirectory. This ensures that cookies, localStorage, and indexedDB are completely partitioned. Gmail in "Vessel A" cannot see the cookies of Gmail in "Vessel B".
-- **IPC Shielding:** The application enforces a strict Content Security Policy (CSP) that restricts the IPC bridge. Injected scripts are prevented from calling arbitrary Tauri commands.
-- **Resource Monitoring:** Rust handles system-level metrics (CPU/RAM) using the `sysinfo` crate, keeping sensitive system data out of the JavaScript context.
+---
 
-## 2. Notification Capture
-The "Brain" panel captures notifications by injecting a bridge script into the webview.
-- **Privacy:** Notifications are stored in a local SQLite database (`vessel.db`) on your machine. 
-- **Data Locality:** No notification data is ever transmitted to a central server. All processing is local.
+## 1. Filesystem & Profile Isolation
 
-## 3. Custom Script Injection
-Users can inject custom CSS and JS. 
-- **Risk:** This is a power-user feature. 
-- **Safety:** Injection is scoped only to the specific app instance and is subject to the site's own security boundaries.
+Each deployed web app container is bound to its own dedicated profile data directory using Tauri's native `WebviewWindowBuilder::data_directory`:
 
-## 4. Encryption
-- **Current State:** Data at rest (SQLite and JSON settings) is currently **unencrypted**. 
-- **Roadmap:** Implementation of native keychain/os-level encryption for sensitive tokens is planned for the **v0.2.0 milestone (Estimated Q3 2026)**.
+* **Windows**: `%LOCALAPPDATA%\Vessel\profiles\<CONTAINER_ID>`
+* **macOS**: `~/Library/Application Support/Vessel/profiles/<CONTAINER_ID>`
+* **Linux**: `~/.local/share/Vessel/profiles/<CONTAINER_ID>`
 
-## 5. Hibernation Engine
-To save resources, Vessel "freezes" background webviews.
-- **Logic:** After a period of inactivity (default 15s), background processes are hibernated.
-- **Safety:** State is preserved in memory but CPU cycles are zeroed until the tab is focused again.
+### Guarantees:
+* **Cookie & Session Partitioning**: Browser sessions, cookies, localStorage, IndexedDB, and ServiceWorkers are physically partitioned per container on disk. A Slack container cannot read, modify, or leak session tokens belonging to a GitHub container.
+* **Complete Deletion**: Deleting a container via the Manager immediately closes any active webview instance and recursively purges its entire profile data directory from the filesystem.
+
+---
+
+## 2. IPC Shielding & Capability Scoping
+
+Tauri v2's capability security layer enforces strict window-level permission scoping:
+
+* **Manager Window (`manager`)**: Holds permissions (`core:default`, `opener:default`) required to list, create, launch, and pin containers.
+* **Container Windows (`container-<ID>`)**: Boot external web URLs (`WebviewUrl::External`) with **zero Tauri capabilities**. Untrusted scripts running inside remote websites cannot invoke native Tauri IPC commands, filesystem operations, or shell commands.
+
+---
+
+## 3. CSP & Content Restrictions
+
+The Manager interface enforces a strict Content Security Policy (CSP):
+* Restricts resource loading to local app assets (`'self'`), fonts, and high-resolution cached icons.
+* External web content is strictly isolated within external container webviews and never rendered inside the Manager DOM.
+
+---
+
+## 4. Data Locality
+
+All container profiles, configurations (`profiles.json`), and cached favicons reside locally on your machine. Vessel does not collect telemetry, track usage, or transmit user information to remote servers.
