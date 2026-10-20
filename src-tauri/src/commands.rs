@@ -1,242 +1,193 @@
-use tauri::{Emitter, Manager, State};
-use chrono::Local;
-use crate::state::{AppState, VesselNotification, MAX_NOTIFICATIONS_PER_MINUTE};
-use crate::{db, webview};
-use crate::metrics;
+use tauri::Manager;
+use crate::profile::{self, ContainerConfig};
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceUsage {
-    pub cpu_percent: f32,
-    pub ram_mb: u64,
-}
-
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct NewTabRequest {
-    pub app_id: String,
-    pub url: String,
-    pub title: Option<String>,
-}
-
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct DiagnosticEvent {
-    pub level: String,
-    pub category: String,
-    pub app_id: String,
-    pub webview_id: Option<String>,
-    pub message: String,
-    pub detail: Option<String>,
-    pub time: String,
-}
-
-pub fn emit_diagnostic(
-    app: &tauri::AppHandle,
-    level: &str,
-    category: &str,
-    app_id: &str,
-    webview_id: Option<&str>,
-    message: &str,
-    detail: Option<String>,
-) {
-    let event = DiagnosticEvent {
-        level: level.to_string(),
-        category: category.to_string(),
-        app_id: app_id.to_string(),
-        webview_id: webview_id.map(|value| value.to_string()),
-        message: message.to_string(),
-        detail,
-        time: Local::now().format("%I:%M %p").to_string(),
-    };
-
-    let _ = app.emit("vessel-diagnostic", event);
+#[tauri::command]
+pub fn list_containers() -> Result<Vec<ContainerConfig>, String> {
+    Ok(profile::load_containers())
 }
 
 #[tauri::command]
-pub async fn get_resource_usage() -> Result<ResourceUsage, String> {
-    let (cpu_percent, ram_mb) = metrics::get_resource_usage_cross_platform(std::process::id());
-    Ok(ResourceUsage {
-        cpu_percent: (cpu_percent * 10.0).round() / 10.0,
-        ram_mb,
-    })
-}
-
-#[tauri::command]
-pub fn set_safe_mode(state: State<'_, AppState>, enabled: bool) {
-    let mut safe_mode = state.safe_mode.lock().expect("safe_mode lock poisoned");
-    *safe_mode = enabled;
-}
-
-#[tauri::command(rename_all = "camelCase")]
-pub fn report_webview_error(
-    app: tauri::AppHandle,
-    app_id: String,
-    webview_id: Option<String>,
-    category: String,
-    message: String,
-    detail: Option<String>,
-) {
-    emit_diagnostic(
-        &app,
-        "warn",
-        &category,
-        &app_id,
-        webview_id.as_deref(),
-        &message,
-        detail,
-    );
-}
-
-#[tauri::command]
-pub fn get_encryption_key() -> Result<String, String> {
-    db::get_encryption_key()
-}
-
-#[tauri::command]
-pub async fn get_notifications(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<VesselNotification>, String> {
-    db::list_notifications(&state.db_path, limit.unwrap_or(200).min(500))
-}
-
-#[tauri::command]
-pub async fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
-    db::clear_notifications_db(&state.db_path)
-}
-
-#[tauri::command(rename_all = "camelCase")]
-pub fn forward_notification(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    app_id: String,
-    title: String,
-    body: String,
-) {
-    let now = Local::now().timestamp();
-    {
-        let mut limits = state.notification_rate_limit.lock().expect("notification_rate_limit lock poisoned");
-        let (count, timestamp) = limits.entry(app_id.clone()).or_insert((0, now));
-        
-        if now - *timestamp > 60 {
-            *count = 1;
-            *timestamp = now;
-        } else {
-            *count += 1;
-        }
-
-        if *count > MAX_NOTIFICATIONS_PER_MINUTE {
-            return;
-        }
+pub async fn create_container(name: String, url: String) -> Result<ContainerConfig, String> {
+    let clean_name = name.trim().to_string();
+    if clean_name.is_empty() {
+        return Err("Container name cannot be empty".to_string());
+    }
+    let clean_url = profile::normalize_url(&url);
+    if url::Url::parse(&clean_url).is_err() {
+        return Err("Invalid URL format".to_string());
     }
 
-    let note = VesselNotification {
-        app_id,
-        title,
-        body,
-        time: Local::now().format("%I:%M %p").to_string(),
+    let mut containers = profile::load_containers();
+    let base_id = profile::sanitize_id(&clean_name);
+    let mut id = base_id.clone();
+    let mut counter = 1;
+    while containers.iter().any(|c| c.id.eq_ignore_ascii_case(&id)) {
+        id = format!("{}-{}", base_id, counter);
+        counter += 1;
+    }
+
+    // Generate isolated container profile directory
+    let profile_dir = profile::get_profile_dir(&id);
+    std::fs::create_dir_all(&profile_dir)
+        .map_err(|e| format!("Failed to create container profile directory: {e}"))?;
+
+    // Fetch and save favicon
+    let icon = profile::fetch_favicon(&clean_url, &id).await;
+
+    let config = ContainerConfig {
+        id: id.clone(),
+        name: clean_name,
+        url: clean_url,
+        icon,
+        created_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    let _ = db::insert_notification(&state.db_path, &note);
-    let _ = app.emit("vessel-notification", &note);
-}
+    containers.push(config.clone());
+    profile::save_containers(&containers)?;
 
-#[tauri::command(rename_all = "camelCase")]
-pub fn request_new_tab(app: tauri::AppHandle, app_id: String, url: String, title: Option<String>) {
-    let payload = NewTabRequest { app_id, url, title };
-    let _ = app.emit("vessel-open-tab", payload);
-}
-
-#[tauri::command(rename_all = "camelCase")]
-pub async fn close_webview(handle: tauri::AppHandle, id: String) -> Result<(), String> {
-    println!("Command: close_webview(id: {})", id);
-    webview::destroy_inactive_webview(&handle, &id);
-    
-    let state = handle.state::<AppState>();
-    let mut active = state
-        .active_webview
-        .lock()
-        .expect("active_webview lock poisoned");
-    if active.as_deref() == Some(id.as_str()) {
-        println!("  Resetting active_webview from {}", id);
-        *active = None;
-    }
-    Ok(())
+    Ok(config)
 }
 
 #[tauri::command]
-pub async fn hide_all_webviews(handle: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let mut active = state
-        .active_webview
-        .lock()
-        .expect("active_webview lock poisoned");
-    *active = None;
+pub async fn delete_container(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    // 1. Close any running window for this container
+    let win_label = format!("container-{}", id);
+    if let Some(win) = app.get_webview_window(&win_label) {
+        let _ = win.close();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
 
-    webview::set_webview_hibernation(&handle, None);
-    Ok(())
-}
+    // 2. Remove config entry from profiles.json
+    let mut containers = profile::load_containers();
+    containers.retain(|c| !c.id.eq_ignore_ascii_case(&id));
+    profile::save_containers(&containers)?;
 
-#[tauri::command(rename_all = "camelCase")]
-pub async fn open_app(
-    window: tauri::Window,
-    handle: tauri::AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    url: String,
-    app_id: Option<String>,
-    profile: Option<String>,
-    css: Option<String>,
-    custom_css: Option<String>,
-    js: Option<String>,
-    custom_js: Option<String>,
-    injection_allowlist: Option<Vec<String>>,
-    idle_sleep_seconds: Option<u64>,
-) -> Result<(), String> {
-    println!("Command: open_app(id: {}, app_id: {:?})", id, app_id);
-    webview::orchestrate_app_webview(
-        window,
-        handle,
-        &state,
-        id,
-        url,
-        app_id,
-        profile,
-        css,
-        custom_css,
-        js,
-        custom_js,
-        injection_allowlist,
-        idle_sleep_seconds,
-    )
-}
-
-#[tauri::command(rename_all = "camelCase")]
-pub async fn delete_app_session(state: State<'_, AppState>, app_id: String) -> Result<(), String> {
-    println!("Command: delete_app_session(app_id: {})", app_id);
-    let app_key = crate::state::sanitize_segment(&app_id, "app");
-    let path = state.sessions_root.join(&app_key);
-    println!("  Deleting session path: {:?}", path);
-    
-    if std::fs::metadata(&path).is_ok() {
+    // 3. Delete isolated profile data directory
+    let profile_dir = profile::get_profile_dir(&id);
+    if profile_dir.exists() {
         let mut last_err = String::new();
-        // Be more patient: 10 retries with 500ms backoff = up to 5 seconds
-        for i in 0..10 {
+        for i in 0..5 {
             if i > 0 {
-                println!("  Retry {}/10...", i);
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(200));
             }
-            match std::fs::remove_dir_all(&path) {
-                Ok(_) => {
-                    println!("  Successfully deleted session data.");
-                    return Ok(());
-                }
-                Err(e) => {
-                    last_err = format!("{e}");
-                    println!("  Attempt {} failed: {}", i + 1, last_err);
-                }
+            match std::fs::remove_dir_all(&profile_dir) {
+                Ok(_) => { last_err.clear(); break; },
+                Err(e) => last_err = e.to_string(),
             }
         }
-        return Err(format!("failed to delete session data after 10 retries: {}", last_err));
-    } else {
-        println!("  Path does not exist, skipping deletion.");
+        if !last_err.is_empty() {
+            eprintln!("Warning: could not delete profile dir {profile_dir:?}: {last_err}");
+        }
     }
+
+    // 4. Remove icon if present
+    let icon_file = profile::get_icons_dir().join(format!("{}.png", id));
+    if icon_file.exists() {
+        let _ = std::fs::remove_file(icon_file);
+    }
+
     Ok(())
+}
+
+#[tauri::command]
+pub async fn launch_container(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    crate::open_or_focus_container(&app, &id)
+}
+
+#[tauri::command]
+pub async fn create_shortcut(id: String) -> Result<String, String> {
+    let container = profile::get_container(&id)
+        .ok_or_else(|| format!("Container '{}' not found", id))?;
+
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable path: {e}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let desktop_dir = std::env::var("USERPROFILE")
+            .map(|p| std::path::PathBuf::from(p).join("Desktop"))
+            .map_err(|_| "Could not find Desktop directory".to_string())?;
+
+        let safe_name: String = container.name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let safe_name = if safe_name.trim().is_empty() { id.clone() } else { safe_name.trim().to_string() };
+
+        let shortcut_path = desktop_dir.join(format!("{}.lnk", safe_name));
+        let exe_str = current_exe.to_string_lossy().to_string();
+        let work_dir_str = current_exe.parent().unwrap_or(&desktop_dir).to_string_lossy().to_string();
+        let shortcut_str = shortcut_path.to_string_lossy().to_string();
+        let args_str = format!("--run-container \"{}\"", id);
+
+        let icon_file = profile::get_icons_dir().join(format!("{}.png", id));
+        let icon_str = if icon_file.exists() {
+            icon_file.to_string_lossy().to_string()
+        } else {
+            format!("{exe_str},0")
+        };
+
+        let ps_script = format!(
+            "$ws = New-Object -ComObject WScript.Shell; \
+             $s = $ws.CreateShortcut('{shortcut}'); \
+             $s.TargetPath = '{exe}'; \
+             $s.Arguments = '{args}'; \
+             $s.WorkingDirectory = '{workdir}'; \
+             $s.Description = '{name} in Vessel'; \
+             $s.IconLocation = '{icon}'; \
+             $s.Save()",
+            shortcut = shortcut_str.replace('\'', "''"),
+            exe = exe_str.replace('\'', "''"),
+            args = args_str.replace('\'', "''"),
+            workdir = work_dir_str.replace('\'', "''"),
+            name = container.name.replace('\'', "''"),
+            icon = icon_str.replace('\'', "''"),
+        );
+
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_script]);
+
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        let output = cmd.output().map_err(|e| format!("PowerShell error: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Shortcut creation failed: {stderr}"));
+        }
+
+        Ok(format!("Desktop shortcut created for \"{}\"", container.name))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").map_err(|_| "Could not find HOME directory".to_string())?;
+        let desktop_dir = std::path::PathBuf::from(home).join("Desktop");
+        let safe_name: String = container.name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let shortcut_path = desktop_dir.join(format!("{}.command", safe_name.trim()));
+        let script = format!("#!/bin/sh\n\"{}\" --run-container \"{}\" &\n", current_exe.display(), id);
+        std::fs::write(&shortcut_path, script).map_err(|e| format!("Failed to write script: {e}"))?;
+        let _ = std::process::Command::new("chmod").args(["+x", &shortcut_path.to_string_lossy()]).output();
+        Ok(format!("Desktop shortcut created for \"{}\"", container.name))
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let home = std::env::var("HOME").map_err(|_| "Could not find HOME directory".to_string())?;
+        let desktop_dir = std::path::PathBuf::from(home).join("Desktop");
+        let safe_name = id.replace(' ', "-");
+        let shortcut_path = desktop_dir.join(format!("{}.desktop", safe_name));
+        let content = format!(
+            "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" --run-container \"{}\"\nIcon=application-default-icon\nTerminal=false\n",
+            container.name,
+            current_exe.display(),
+            id
+        );
+        std::fs::write(&shortcut_path, content).map_err(|e| format!("Failed to write .desktop file: {e}"))?;
+        Ok(format!("Desktop shortcut created for \"{}\"", container.name))
+    }
 }

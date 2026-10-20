@@ -16,18 +16,7 @@
     }
   },
   "app": {
-    "windows": [
-  {
-    "title": "Vessel",
-    "label": "main",
-    "width": 1000,
-    "height": 800,
-    "minWidth": 600,
-    "minHeight": 500,
-    "decorations": true,
-    "resizable": true
-  }
-],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' asset: blob: data: https:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420;"
     }
