@@ -46,6 +46,76 @@ pub fn open_manager_window(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub fn get_root_domain(host: &str) -> &str {
+    let host = host.trim().trim_start_matches("www.");
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() <= 2 {
+        return host;
+    }
+    let last = parts[parts.len() - 1];
+    let second_last = parts[parts.len() - 2];
+    if ["co", "com", "org", "net", "gov", "edu"].contains(&second_last) && parts.len() >= 3 {
+        let third_last = parts[parts.len() - 3];
+        let offset = host.len() - (third_last.len() + second_last.len() + last.len() + 2);
+        return &host[offset..];
+    }
+    let offset = host.len() - (second_last.len() + last.len() + 1);
+    &host[offset..]
+}
+
+pub fn is_allowed_container_navigation(url: &url::Url, base_host: &str, root_domain: &str) -> bool {
+    let scheme = url.scheme();
+    // Allow internal browser schemes
+    if scheme == "about" || scheme == "blob" || scheme == "data" || scheme == "javascript" {
+        return true;
+    }
+
+    let target_host = match url.host_str() {
+        Some(h) => h.to_lowercase(),
+        None => return true,
+    };
+
+    // 1. Same host or subdomain (e.g. app.linear.app vs linear.app)
+    if target_host == base_host || target_host.ends_with(&format!(".{base_host}")) {
+        return true;
+    }
+
+    // 2. Same root domain (e.g. accounts.spotify.com vs open.spotify.com)
+    if !root_domain.is_empty() && (target_host == root_domain || target_host.ends_with(&format!(".{root_domain}"))) {
+        return true;
+    }
+
+    // 3. Known OAuth / SSO / Identity Providers
+    const KNOWN_AUTH_DOMAINS: &[&str] = &[
+        "accounts.google.com",
+        "login.microsoftonline.com",
+        "login.live.com",
+        "appleid.apple.com",
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "auth0.com",
+        "okta.com",
+        "onelogin.com",
+        "clerk.com",
+        "clerk.accounts.dev",
+        "identity.atlassian.com",
+        "auth.atlassian.com",
+        "sso.slack.com",
+        "discord.com",
+        "facebook.com",
+        "twitter.com",
+        "x.com",
+        "linkedin.com",
+    ];
+
+    if KNOWN_AUTH_DOMAINS.iter().any(|&auth| target_host == auth || target_host.ends_with(&format!(".{auth}"))) {
+        return true;
+    }
+
+    false
+}
+
 pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     let win_label = format!("container-{}", id);
     if let Some(win) = app.get_webview_window(&win_label) {
@@ -64,6 +134,10 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
     let profile_dir = profile::get_profile_dir(&container.id);
     let _ = std::fs::create_dir_all(&profile_dir);
 
+    let initial_url = external_url.clone();
+    let base_host = external_url.host_str().unwrap_or("").to_lowercase();
+    let root_domain = get_root_domain(&base_host).to_string();
+
     let builder = WebviewWindowBuilder::new(
         app,
         &win_label,
@@ -74,7 +148,21 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
     .min_inner_size(600.0, 450.0)
     .resizable(true)
     .user_agent(get_stealth_user_agent())
-    .data_directory(profile_dir);
+    .data_directory(profile_dir)
+    .on_navigation(move |nav_url| {
+        // Ensure the initial load of container.url always passes the check
+        if nav_url == &initial_url || nav_url.as_str() == initial_url.as_str() {
+            return true;
+        }
+
+        if is_allowed_container_navigation(nav_url, &base_host, &root_domain) {
+            true
+        } else {
+            // Open external URLs in default system browser
+            let _ = tauri_plugin_opener::open_url(nav_url.as_str(), None::<&str>);
+            false
+        }
+    });
 
     builder.build().map_err(|e| format!("Failed to create container window for '{id}': {e}"))?;
     Ok(())
@@ -134,3 +222,65 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running Vessel");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_root_domain_extraction() {
+        assert_eq!(get_root_domain("linear.app"), "linear.app");
+        assert_eq!(get_root_domain("app.linear.app"), "linear.app");
+        assert_eq!(get_root_domain("open.spotify.com"), "spotify.com");
+        assert_eq!(get_root_domain("sub.domain.example.co.uk"), "example.co.uk");
+        assert_eq!(get_root_domain("www.github.com"), "github.com");
+    }
+
+    #[test]
+    fn test_allowed_container_navigation() {
+        let base_host = "linear.app";
+        let root_domain = "linear.app";
+
+        // Same domain
+        let url_same = url::Url::parse("https://linear.app/my-team/issue").unwrap();
+        assert!(is_allowed_container_navigation(&url_same, base_host, root_domain));
+
+        // Subdomain
+        let url_sub = url::Url::parse("https://app.linear.app/settings").unwrap();
+        assert!(is_allowed_container_navigation(&url_sub, base_host, root_domain));
+
+        // Browser internal scheme
+        let url_about = url::Url::parse("about:blank").unwrap();
+        assert!(is_allowed_container_navigation(&url_about, base_host, root_domain));
+
+        // Known OAuth identity providers
+        let url_google = url::Url::parse("https://accounts.google.com/o/oauth2/auth?client_id=123").unwrap();
+        assert!(is_allowed_container_navigation(&url_google, base_host, root_domain));
+
+        let url_ms = url::Url::parse("https://login.microsoftonline.com/common/oauth2/authorize").unwrap();
+        assert!(is_allowed_container_navigation(&url_ms, base_host, root_domain));
+
+        let url_apple = url::Url::parse("https://appleid.apple.com/auth/authorize").unwrap();
+        assert!(is_allowed_container_navigation(&url_apple, base_host, root_domain));
+
+        let url_github = url::Url::parse("https://github.com/login/oauth/authorize").unwrap();
+        assert!(is_allowed_container_navigation(&url_github, base_host, root_domain));
+
+        let url_okta = url::Url::parse("https://company.okta.com/oauth2/v1/authorize").unwrap();
+        assert!(is_allowed_container_navigation(&url_okta, base_host, root_domain));
+
+        let url_auth0 = url::Url::parse("https://company.auth0.com/authorize").unwrap();
+        assert!(is_allowed_container_navigation(&url_auth0, base_host, root_domain));
+
+        let url_clerk = url::Url::parse("https://subdomain.clerk.accounts.dev/sign-in").unwrap();
+        assert!(is_allowed_container_navigation(&url_clerk, base_host, root_domain));
+
+        // External third-party URLs (must be blocked in container so they open in external browser)
+        let url_news = url::Url::parse("https://news.ycombinator.com/item?id=456").unwrap();
+        assert!(!is_allowed_container_navigation(&url_news, base_host, root_domain));
+
+        let url_external = url::Url::parse("https://www.theverge.com/tech").unwrap();
+        assert!(!is_allowed_container_navigation(&url_external, base_host, root_domain));
+    }
+}
+

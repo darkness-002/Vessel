@@ -284,7 +284,7 @@
       <span class="text-sm font-semibold tracking-tight text-zinc-100">Vessel</span>
     </div>
 
-    <!-- Quick Search Filter & [+ New App] Button -->
+    <!-- Quick Search Filter & [ New App] Button -->
     <div class="flex items-center gap-3">
       <div class="relative w-64">
         <span class="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-base pointer-events-none">
@@ -319,7 +319,7 @@
         class="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-100 text-zinc-950 font-semibold text-xs hover:bg-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 focus-visible:ring-offset-vessel-bg transition-all duration-150 ease-out shadow-sm"
       >
         <span class="material-symbols-outlined text-sm leading-none font-bold">add</span>
-        <span>+ New App</span>
+        <span>New App</span>
       </button>
     </div>
   </header>
@@ -366,7 +366,7 @@
             class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-zinc-100 text-zinc-950 font-semibold text-xs hover:bg-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 focus-visible:ring-offset-vessel-bg transition-all duration-150 ease-out shadow-sm"
           >
             <span class="material-symbols-outlined text-sm font-bold">add</span>
-            <span>+ New App</span>
+            <span>New App</span>
           </button>
 
           <!-- Quick Templates -->

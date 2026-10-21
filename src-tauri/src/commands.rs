@@ -94,6 +94,43 @@ pub async fn launch_container(app: tauri::AppHandle, id: String) -> Result<(), S
     crate::open_or_focus_container(&app, &id)
 }
 
+pub fn resolve_desktop_dir() -> Result<std::path::PathBuf, String> {
+    // 1. Try dirs::desktop_dir() which queries SHGetKnownFolderPath(FOLDERID_Desktop) on Windows
+    if let Some(dir) = dirs::desktop_dir() {
+        if dir.exists() {
+            return Ok(dir);
+        }
+    }
+
+    // 2. Windows fallback: check OneDrive KFM Desktop and standard Desktop
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            let onedrive_desktop = std::path::PathBuf::from(&profile).join("OneDrive").join("Desktop");
+            if onedrive_desktop.exists() {
+                return Ok(onedrive_desktop);
+            }
+            let standard_desktop = std::path::PathBuf::from(&profile).join("Desktop");
+            if standard_desktop.exists() {
+                return Ok(standard_desktop);
+            }
+        }
+    }
+
+    // 3. Unix fallback: check HOME/Desktop
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let desktop = std::path::PathBuf::from(&home).join("Desktop");
+            if desktop.exists() {
+                return Ok(desktop);
+            }
+        }
+    }
+
+    dirs::desktop_dir().ok_or_else(|| "Could not locate Desktop directory".to_string())
+}
+
 #[tauri::command]
 pub async fn create_shortcut(id: String) -> Result<String, String> {
     let container = profile::get_container(&id)
@@ -104,9 +141,7 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        let desktop_dir = std::env::var("USERPROFILE")
-            .map(|p| std::path::PathBuf::from(p).join("Desktop"))
-            .map_err(|_| "Could not find Desktop directory".to_string())?;
+        let desktop_dir = resolve_desktop_dir()?;
 
         let safe_name: String = container.name
             .chars()
@@ -162,8 +197,7 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
-        let home = std::env::var("HOME").map_err(|_| "Could not find HOME directory".to_string())?;
-        let desktop_dir = std::path::PathBuf::from(home).join("Desktop");
+        let desktop_dir = resolve_desktop_dir()?;
         let safe_name: String = container.name
             .chars()
             .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
@@ -177,8 +211,7 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
 
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
-        let home = std::env::var("HOME").map_err(|_| "Could not find HOME directory".to_string())?;
-        let desktop_dir = std::path::PathBuf::from(home).join("Desktop");
+        let desktop_dir = resolve_desktop_dir()?;
         let safe_name = id.replace(' ', "-");
         let shortcut_path = desktop_dir.join(format!("{}.desktop", safe_name));
         let content = format!(
