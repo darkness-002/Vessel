@@ -19,3 +19,14 @@ url = "2.5.4"
 dirs = "6.0.0"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 base64 = "0.22"
+ico = "0.5"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+sysinfo = "0.39.6"
+tokio = { version = "1.54.1", features = ["time", "sync"] }
+aes-gcm = "0.11.1"
+argon2 = "0.6.0"
+keyring = "4.2.0"
+tar = "0.4.46"
+flate2 = "1.1.10"
+zeroize = "1.9.1"
+rand = "0.10.3"

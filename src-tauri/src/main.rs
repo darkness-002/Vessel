@@ -2,7 +2,10 @@
 
 mod profile;
 mod commands;
+pub mod supervisor;
+pub mod vault;
 
+use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewUrl, webview::WebviewWindowBuilder};
 
 pub fn get_stealth_user_agent() -> &'static str {
@@ -122,14 +125,43 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+        if let Some(state) = app.try_state::<supervisor::SupervisorState>() {
+            if let Ok(mut sup) = state.lock() {
+                let pid = supervisor::extract_window_pid(&win);
+                let title = win.title().unwrap_or_default();
+                let url_str = win.url().map(|u| u.to_string()).unwrap_or_default();
+                sup.register_or_activate(id, &title, &url_str, pid);
+            }
+        }
         return Ok(());
     }
 
     let container = profile::get_container(id)
         .ok_or_else(|| format!("Container '{id}' is not registered in profiles.json"))?;
 
-    let external_url = url::Url::parse(&container.url)
-        .map_err(|e| format!("Invalid container URL '{}': {e}", container.url))?;
+    // Check if an encrypted vault exists. If so, decrypt and unpack before launching webview
+    let vault_path = vault::get_vault_path(id);
+    if vault_path.exists() {
+        let key = vault::get_or_create_vault_key(id)
+            .map_err(|e| format!("Failed to retrieve vault key from Keyring for '{id}': {e}"))?;
+        let profile_dest = profile::get_profile_dir(id);
+        vault::decrypt_and_unpack_vault(id, &vault_path, &profile_dest, &key)
+            .map_err(|e| format!("Failed to unlock encrypted vault for '{id}': {e}"))?;
+    }
+
+    let target_url_str = if let Some(state) = app.try_state::<supervisor::SupervisorState>() {
+        let lock = state.lock().ok();
+        lock.and_then(|s| s.get_container(id))
+            .filter(|c| !c.current_url.is_empty())
+            .map(|c| c.current_url)
+            .unwrap_or_else(|| container.url.clone())
+    } else {
+        container.url.clone()
+    };
+
+    let external_url = url::Url::parse(&target_url_str)
+        .or_else(|_| url::Url::parse(&container.url))
+        .map_err(|e| format!("Invalid container URL '{}': {e}", target_url_str))?;
 
     let profile_dir = profile::get_profile_dir(&container.id);
     let _ = std::fs::create_dir_all(&profile_dir);
@@ -137,6 +169,9 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
     let initial_url = external_url.clone();
     let base_host = external_url.host_str().unwrap_or("").to_lowercase();
     let root_domain = get_root_domain(&base_host).to_string();
+
+    let app_handle_nav = app.clone();
+    let id_nav = id.to_string();
 
     let builder = WebviewWindowBuilder::new(
         app,
@@ -150,6 +185,12 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
     .user_agent(get_stealth_user_agent())
     .data_directory(profile_dir)
     .on_navigation(move |nav_url| {
+        if let Some(state) = app_handle_nav.try_state::<supervisor::SupervisorState>() {
+            if let Ok(mut sup) = state.lock() {
+                sup.update_url(&id_nav, nav_url.as_str());
+            }
+        }
+
         // Ensure the initial load of container.url always passes the check
         if nav_url == &initial_url || nav_url.as_str() == initial_url.as_str() {
             return true;
@@ -164,7 +205,52 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
         }
     });
 
-    builder.build().map_err(|e| format!("Failed to create container window for '{id}': {e}"))?;
+    let win = builder.build().map_err(|e| format!("Failed to create container window for '{id}': {e}"))?;
+
+    let win_pid = supervisor::extract_window_pid(&win);
+    if let Some(state) = app.try_state::<supervisor::SupervisorState>() {
+        if let Ok(mut sup) = state.lock() {
+            sup.register_or_activate(id, &container.name, &target_url_str, win_pid);
+        }
+    }
+
+    let app_handle_events = app.clone();
+    let id_events = id.to_string();
+    win.on_window_event(move |event| {
+        if let Some(state) = app_handle_events.try_state::<supervisor::SupervisorState>() {
+            match event {
+                tauri::WindowEvent::Focused(focused) => {
+                    if let Ok(mut sup) = state.lock() {
+                        sup.update_focus(&id_events, *focused);
+                    }
+                }
+                tauri::WindowEvent::Destroyed => {
+                    if let Ok(mut sup) = state.lock() {
+                        sup.mark_closed(&id_events);
+                    }
+
+                    // Automatic vault sealing on container close
+                    let id_vault = id_events.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        let profile_dir = profile::get_profile_dir(&id_vault);
+                        if profile_dir.exists() {
+                            let vault_dest = vault::get_vault_path(&id_vault);
+                            if let Ok(key) = vault::get_or_create_vault_key(&id_vault) {
+                                if let Err(e) = vault::pack_and_encrypt_vault(&id_vault, &profile_dir, &vault_dest, &key) {
+                                    eprintln!("[Vault] Automatic lock on close failed for '{id_vault}': {e}");
+                                } else {
+                                    println!("[Vault] Container '{id_vault}' automatically locked and encrypted at rest");
+                                }
+                            }
+                        }
+                    });
+                }
+                _ => {}
+            }
+        }
+    });
+
     Ok(())
 }
 
@@ -186,7 +272,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let initial_run_container = parse_run_container_id(&args);
 
+    let mut init_supervisor = supervisor::ProcessSupervisor::new(supervisor::SupervisorConfig::default());
+    for container in profile::load_containers() {
+        init_supervisor.register_container(&container.id, &container.name, &container.url);
+    }
+    let supervisor: supervisor::SupervisorState = Arc::new(Mutex::new(init_supervisor));
+
     tauri::Builder::default()
+        .manage(supervisor.clone())
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(target_id) = parse_run_container_id(&argv) {
                 let _ = open_or_focus_container(app, &target_id);
@@ -196,6 +289,8 @@ fn main() {
         }))
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            supervisor::start_idle_monitor(app.handle().clone(), supervisor.clone());
+
             if let Some(container_id) = initial_run_container {
                 // Container Mode: vessel --run-container <ID>
                 // Boots ONLY the targeted WebviewWindow pointing to the container URL.
@@ -217,7 +312,13 @@ fn main() {
             commands::create_container,
             commands::delete_container,
             commands::launch_container,
-            commands::create_shortcut
+            commands::create_shortcut,
+            commands::get_container_metrics,
+            commands::wake_container,
+            commands::force_hibernate_container,
+            commands::lock_container_vault,
+            commands::unlock_container_vault,
+            commands::is_vault_locked
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vessel");
@@ -281,6 +382,35 @@ mod tests {
 
         let url_external = url::Url::parse("https://www.theverge.com/tech").unwrap();
         assert!(!is_allowed_container_navigation(&url_external, base_host, root_domain));
+    }
+
+    #[test]
+    fn test_create_shortcut_existing_container() {
+        if profile::get_container("spotify").is_some() {
+            let res = tauri::async_runtime::block_on(commands::create_shortcut("spotify".to_string()));
+            assert!(res.is_ok(), "create_shortcut for spotify should succeed: {:?}", res);
+
+            let ico_path = profile::get_profile_icon_path("spotify");
+            assert!(ico_path.exists(), "Profile icon file should exist at {:?}", ico_path);
+
+            let meta = std::fs::metadata(&ico_path).expect("Icon metadata should be readable");
+            assert!(meta.len() > 0, "Icon file should not be empty");
+
+            // Verify container config was updated with icon_path
+            let updated = profile::get_container("spotify").expect("Container should exist");
+            assert!(updated.icon_path.is_some(), "Container icon_path should be populated");
+        }
+
+        if profile::get_container("github").is_some() {
+            let res = tauri::async_runtime::block_on(commands::create_shortcut("github".to_string()));
+            assert!(res.is_ok(), "create_shortcut for github should succeed: {:?}", res);
+
+            let ico_path = profile::get_profile_icon_path("github");
+            assert!(ico_path.exists(), "Profile icon file should exist at {:?}", ico_path);
+
+            let updated = profile::get_container("github").expect("Container should exist");
+            assert!(updated.icon_path.is_some(), "Container icon_path should be populated");
+        }
     }
 }
 
