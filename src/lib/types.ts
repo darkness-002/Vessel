@@ -1,5 +1,11 @@
 export type ContainerStatus = 'running' | 'idle' | 'hibernated' | 'closed';
 
+export type EffectiveCardState = 'running' | 'idle' | 'hibernated' | 'locked' | 'closed';
+
+export type CardDensity = 'minimal' | 'detailed';
+
+export type FilterCategory = 'all' | 'active' | 'hibernated' | 'locked';
+
 export interface ContainerProcessMetrics {
   id: string;
   name: string;
@@ -10,6 +16,7 @@ export interface ContainerProcessMetrics {
   cpuUsage: number;
   lastActiveAt: string;
   idleSeconds: number;
+  history?: { memoryMb: number; cpuUsage: number }[];
 }
 
 export interface ContainerConfig {
@@ -19,4 +26,31 @@ export interface ContainerConfig {
   icon?: string | null;
   iconPath?: string | null;
   createdAt: string;
+  profileLabel?: string;
+  neverHibernate?: boolean;
+  idleThresholdMinutes?: number;
+}
+
+export interface ContainerCustomSettings {
+  name?: string;
+  profileLabel?: string;
+  neverHibernate?: boolean;
+  idleThresholdMinutes?: number;
+}
+
+export interface AppSettings {
+  density: CardDensity;
+  isDemoMode: boolean;
+  globalIdleThresholdMinutes: number;
+}
+
+export interface MemoryComparison {
+  vesselActiveMb: number;
+  electronEquivalentMb: number;
+  savedMb: number;
+  savedPercentage: number;
+  activeCount: number;
+  hibernatedCount: number;
+  lockedCount: number;
+  totalCount: number;
 }

@@ -1,18 +1,29 @@
 import { writable } from 'svelte/store';
 
+export type ToastAction = {
+  label: string;
+  onClick: () => void;
+};
+
 export type Toast = {
   id: string;
   message: string;
   type?: 'info' | 'success' | 'error';
   duration?: number;
+  action?: ToastAction;
 };
 
 export const toasts = writable<Toast[]>([]);
 
-export function showToast(message: string, type: 'info' | 'success' | 'error' = 'info', duration = 4000) {
+export function showToast(
+  message: string,
+  type: 'info' | 'success' | 'error' = 'info',
+  duration = 4000,
+  action?: ToastAction
+) {
   const id = Math.random().toString(36).substring(2, 9);
-  const toast: Toast = { id, message, type, duration };
-  
+  const toast: Toast = { id, message, type, duration, action };
+
   toasts.update(current => [...current, toast]);
 
   if (duration > 0) {
@@ -20,6 +31,7 @@ export function showToast(message: string, type: 'info' | 'success' | 'error' = 
       dismissToast(id);
     }, duration);
   }
+  return id;
 }
 
 export function dismissToast(id: string) {
