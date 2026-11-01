@@ -145,11 +145,23 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
     // Check if an encrypted vault exists. If so, decrypt and unpack before launching webview
     let vault_path = vault::get_vault_path(id);
     if vault_path.exists() {
-        let key = vault::get_or_create_vault_key(id)
-            .map_err(|e| format!("Failed to retrieve vault key from Keyring for '{id}': {e}"))?;
-        let profile_dest = profile::get_profile_dir(id);
-        vault::decrypt_and_unpack_vault(id, &vault_path, &profile_dest, &key)
-            .map_err(|e| format!("Failed to unlock encrypted vault for '{id}': {e}"))?;
+        let mode = vault::read_vault_mode(&vault_path)
+            .map_err(|e| format!("Failed to read vault mode for '{id}': {e}"))?;
+        match mode {
+            vault::VaultMode::Keyring => {
+                let key = vault::load_key(id).map_err(|e| {
+                    format!("Failed to retrieve vault key from Keyring for '{id}': {e}")
+                })?;
+                let profile_dest = profile::get_profile_dir(id);
+                vault::decrypt_and_unpack_vault(id, &vault_path, &profile_dest, &key)
+                    .map_err(|e| format!("Failed to unlock encrypted vault for '{id}': {e}"))?;
+            }
+            vault::VaultMode::Passphrase => {
+                return Err(format!(
+                    "Container '{id}' is encrypted with a master passphrase. Please unlock it from the dashboard."
+                ));
+            }
+        }
     }
 
     let target_url_str = if let Some(state) = app.try_state::<supervisor::SupervisorState>() {
@@ -237,11 +249,21 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
                         let profile_dir = profile::get_profile_dir(&id_vault);
                         if profile_dir.exists() {
                             let vault_dest = vault::get_vault_path(&id_vault);
-                            if let Ok(key) = vault::get_or_create_vault_key(&id_vault) {
-                                if let Err(e) = vault::pack_and_encrypt_vault(&id_vault, &profile_dir, &vault_dest, &key) {
-                                    eprintln!("[Vault] Automatic lock on close failed for '{id_vault}': {e}");
-                                } else {
-                                    println!("[Vault] Container '{id_vault}' automatically locked and encrypted at rest");
+                            match vault::load_or_create_key(&id_vault) {
+                                Ok(key) => {
+                                    if let Err(e) = vault::pack_and_encrypt_vault(
+                                        &id_vault,
+                                        &profile_dir,
+                                        &vault_dest,
+                                        &key,
+                                    ) {
+                                        eprintln!("[Vault] Automatic lock on close failed for '{id_vault}': {e}");
+                                    } else {
+                                        println!("[Vault] Container '{id_vault}' automatically locked and encrypted at rest");
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[Vault] Keyring unavailable for '{id_vault}', skipping auto-seal to preserve profile: {e}");
                                 }
                             }
                         }
@@ -320,7 +342,8 @@ fn main() {
             commands::force_hibernate_container,
             commands::lock_container_vault,
             commands::unlock_container_vault,
-            commands::is_vault_locked
+            commands::is_vault_locked,
+            commands::get_vault_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vessel");

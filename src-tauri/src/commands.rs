@@ -1,4 +1,5 @@
 use crate::profile::{self, ContainerConfig};
+use rand::RngExt;
 use tauri::Manager;
 
 #[tauri::command]
@@ -149,7 +150,11 @@ pub async fn force_hibernate_container(
 }
 
 #[tauri::command]
-pub async fn lock_container_vault(app: tauri::AppHandle, id: String) -> Result<String, String> {
+pub async fn lock_container_vault(
+    app: tauri::AppHandle,
+    id: String,
+    passphrase: Option<String>,
+) -> Result<String, String> {
     let win_label = format!("container-{}", id);
     if let Some(win) = app.get_webview_window(&win_label) {
         let _ = win.destroy();
@@ -165,14 +170,35 @@ pub async fn lock_container_vault(app: tauri::AppHandle, id: String) -> Result<S
     let profile_dir = profile::get_profile_dir(&id);
     let vault_dest = crate::vault::get_vault_path(&id);
 
-    let key =
-        crate::vault::get_or_create_vault_key(&id).map_err(|e| format!("Keyring error: {e}"))?;
+    let (mode, key, salt) = if let Some(pass) = passphrase.filter(|p| !p.trim().is_empty()) {
+        let mut salt = [0u8; crate::vault::SALT_LEN];
+        rand::rng().fill(&mut salt);
+        let derived = crate::vault::derive_key_from_passphrase(&pass, &salt)
+            .map_err(|e| format!("Passphrase key derivation failed: {e}"))?;
+        (crate::vault::VaultMode::Passphrase, derived, Some(salt))
+    } else {
+        let stored =
+            crate::vault::create_and_store_key(&id).map_err(|e| format!("Keyring error: {e}"))?;
+        (crate::vault::VaultMode::Keyring, stored, None)
+    };
 
-    crate::vault::pack_and_encrypt_vault(&id, &profile_dir, &vault_dest, &key)
-        .map_err(|e| format!("Vault encryption failed: {e}"))?;
+    crate::vault::pack_and_encrypt_vault_with_mode(
+        &id,
+        &profile_dir,
+        &vault_dest,
+        mode,
+        &key,
+        salt,
+    )
+    .map_err(|e| format!("Vault encryption failed: {e}"))?;
+
+    let mode_str = match mode {
+        crate::vault::VaultMode::Keyring => "OS Keyring",
+        crate::vault::VaultMode::Passphrase => "Master Passphrase",
+    };
 
     Ok(format!(
-        "Vault for container '{id}' locked and encrypted at rest"
+        "Vault for container '{id}' locked and encrypted with {mode_str}"
     ))
 }
 
@@ -187,21 +213,42 @@ pub async fn unlock_container_vault(
     }
 
     let profile_dest = profile::get_profile_dir(&id);
+    let mode = crate::vault::read_vault_mode(&vault_path)
+        .map_err(|e| format!("Failed to read vault header: {e}"))?;
 
-    let key = if let Some(pass) = passphrase.filter(|p| !p.trim().is_empty()) {
-        let salt = crate::vault::read_vault_salt(&vault_path)
-            .map_err(|e| format!("Failed to read vault header: {e}"))?;
-        crate::vault::derive_key_from_passphrase(&pass, &salt)
-            .map_err(|e| format!("Passphrase key derivation failed: {e}"))?
-    } else {
-        crate::vault::get_or_create_vault_key(&id)
-            .map_err(|e| format!("Keyring retrieval failed: {e}"))?
+    let key = match mode {
+        crate::vault::VaultMode::Passphrase => {
+            let pass = passphrase
+                .filter(|p| !p.trim().is_empty())
+                .ok_or_else(|| "This vault is protected by a master passphrase. Passphrase is required to unlock.".to_string())?;
+            let salt = crate::vault::read_vault_salt(&vault_path)
+                .map_err(|e| format!("Failed to read vault salt: {e}"))?;
+            crate::vault::derive_key_from_passphrase(&pass, &salt)
+                .map_err(|e| format!("Passphrase key derivation failed: {e}"))?
+        }
+        crate::vault::VaultMode::Keyring => {
+            crate::vault::load_key(&id).map_err(|e| format!("Keyring key retrieval failed: {e}"))?
+        }
     };
 
     crate::vault::decrypt_and_unpack_vault(&id, &vault_path, &profile_dest, &key)
         .map_err(|e| format!("Decryption failed: {e}"))?;
 
     Ok(format!("Vault for container '{id}' unlocked successfully"))
+}
+
+#[tauri::command]
+pub fn get_vault_mode(id: String) -> Result<String, String> {
+    let vault_path = crate::vault::get_vault_path(&id);
+    if !vault_path.exists() {
+        return Err(format!("Vault for container '{id}' does not exist"));
+    }
+    let mode = crate::vault::read_vault_mode(&vault_path)
+        .map_err(|e| format!("Failed to read vault mode: {e}"))?;
+    match mode {
+        crate::vault::VaultMode::Keyring => Ok("keyring".to_string()),
+        crate::vault::VaultMode::Passphrase => Ok("passphrase".to_string()),
+    }
 }
 
 #[tauri::command]

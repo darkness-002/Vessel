@@ -6,6 +6,8 @@ export type CardDensity = 'minimal' | 'detailed';
 
 export type FilterCategory = 'all' | 'active' | 'hibernated' | 'locked';
 
+export type VaultMode = 'keyring' | 'passphrase';
+
 export interface ContainerProcessMetrics {
   id: string;
   name: string;

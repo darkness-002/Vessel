@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { ContainerConfig } from '$lib/types';
+  import type { ContainerConfig, VaultMode } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
 
   interface Props {
     isOpen: boolean;
     container: ContainerConfig | null;
+    vaultMode?: VaultMode;
     isUnlocking: boolean;
     error?: string;
     onUnlock: (passphrase?: string) => void;
@@ -14,6 +15,7 @@
   let {
     isOpen = false,
     container = null,
+    vaultMode = 'keyring',
     isUnlocking = false,
     error = '',
     onUnlock,
@@ -25,7 +27,11 @@
 
   function handleSubmit(e: SubmitEvent) {
     e.preventDefault();
-    onUnlock(passphrase.trim() ? passphrase : undefined);
+    if (vaultMode === 'passphrase') {
+      onUnlock(passphrase.trim());
+    } else {
+      onUnlock(undefined);
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -90,34 +96,46 @@
           </div>
         {/if}
 
-        <div class="text-xs text-zinc-400 leading-relaxed bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
-          This container's session cookies, localStorage, and IndexedDB are encrypted at rest with <strong class="text-zinc-200">AES-256-GCM</strong>.
-          If backed by your native OS Keyring (Windows DPAPI / Apple Keychain), leave this field empty to unlock automatically.
-        </div>
-
-        <div>
-          <label for="vault-passphrase" class="block text-xs font-medium text-zinc-300 mb-1.5">
-            Master Passphrase <span class="text-zinc-500 font-normal">(Optional if stored in OS Keyring)</span>
-          </label>
-          <div class="relative flex items-center">
-            <input
-              id="vault-passphrase"
-              type={showPassword ? 'text' : 'password'}
-              bind:value={passphrase}
-              placeholder="Leave blank for OS Keyring, or enter passphrase"
-              disabled={isUnlocking}
-              class="w-full px-3 py-2 text-xs font-mono bg-zinc-900 border border-zinc-700/80 rounded-lg focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none text-zinc-100 placeholder:text-zinc-500 transition-colors pr-12 min-h-[44px]"
-            />
-            <button
-              type="button"
-              onclick={() => (showPassword = !showPassword)}
-              class="absolute right-1 inline-flex items-center justify-center min-w-[40px] min-h-[40px] text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 transition-colors rounded"
-              aria-label={showPassword ? 'Hide passphrase' : 'Show passphrase'}
-            >
-              <Icon name={showPassword ? 'lock_open' : 'lock'} size={16} />
-            </button>
+        {#if vaultMode === 'passphrase'}
+          <div class="text-xs text-zinc-400 leading-relaxed bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
+            This container's profile is encrypted at rest with <strong class="text-zinc-200">AES-256-GCM</strong> using a custom master passphrase.
+            Please enter your passphrase to decrypt and launch.
           </div>
-        </div>
+
+          <div>
+            <label for="vault-passphrase" class="block text-xs font-medium text-zinc-300 mb-1.5">
+              Master Passphrase
+            </label>
+            <div class="relative flex items-center">
+              <input
+                id="vault-passphrase"
+                type={showPassword ? 'text' : 'password'}
+                bind:value={passphrase}
+                placeholder="Enter master passphrase"
+                required
+                disabled={isUnlocking}
+                class="w-full px-3 py-2 text-xs font-mono bg-zinc-900 border border-zinc-700/80 rounded-lg focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none text-zinc-100 placeholder:text-zinc-500 transition-colors pr-12 min-h-[44px]"
+              />
+              <button
+                type="button"
+                onclick={() => (showPassword = !showPassword)}
+                class="absolute right-1 inline-flex items-center justify-center min-w-[40px] min-h-[40px] text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 transition-colors rounded"
+                aria-label={showPassword ? 'Hide passphrase' : 'Show passphrase'}
+              >
+                <Icon name={showPassword ? 'lock_open' : 'lock'} size={16} />
+              </button>
+            </div>
+          </div>
+        {:else}
+          <div class="text-xs text-zinc-400 leading-relaxed bg-zinc-900/60 p-3.5 rounded-lg border border-zinc-800/80 space-y-1.5">
+            <p>
+              This container's session cookies and storage are encrypted at rest with <strong class="text-zinc-200">AES-256-GCM</strong>.
+            </p>
+            <p class="text-zinc-300">
+              The cryptographic key is stored in your native <strong>OS Credential Store</strong>. Click Unlock to launch.
+            </p>
+          </div>
+        {/if}
 
         <!-- Footer Actions -->
         <div class="pt-3 flex items-center justify-end gap-2.5">
@@ -139,7 +157,7 @@
               <span>Decrypting Vault...</span>
             {:else}
               <Icon name="lock_open" size={14} />
-              <span>Unlock & Launch</span>
+              <span>{vaultMode === 'passphrase' ? 'Unlock & Launch' : 'Unlock via OS Keyring'}</span>
             {/if}
           </button>
         </div>

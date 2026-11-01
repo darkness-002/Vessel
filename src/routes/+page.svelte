@@ -6,6 +6,7 @@
     ContainerProcessMetrics,
     FilterCategory,
     ContainerCustomSettings,
+    VaultMode,
   } from '$lib/types';
   import { showToast } from '$lib/stores/toastStore';
   import { appSettings, updateAppSettings, toggleDensity } from '$lib/stores/appSettings';
@@ -60,6 +61,7 @@
   let showCreateModal = $state(false);
   let showUnlockModal = $state(false);
   let unlockTarget = $state<ContainerConfig | null>(null);
+  let unlockTargetVaultMode = $state<VaultMode>('keyring');
   let isUnlocking = $state(false);
   let unlockError = $state('');
 
@@ -333,6 +335,15 @@
     if (isLocked) {
       unlockTarget = container;
       unlockError = '';
+      try {
+        if (!$appSettings.isDemoMode) {
+          unlockTargetVaultMode = await invoke<VaultMode>('get_vault_mode', { id: container.id });
+        } else {
+          unlockTargetVaultMode = 'keyring';
+        }
+      } catch {
+        unlockTargetVaultMode = 'keyring';
+      }
       showUnlockModal = true;
       return;
     }
@@ -371,6 +382,15 @@
       if (msg.includes('vault') || msg.includes('passphrase') || msg.includes('locked')) {
         unlockTarget = container;
         unlockError = msg;
+        try {
+          if (!$appSettings.isDemoMode) {
+            unlockTargetVaultMode = await invoke<VaultMode>('get_vault_mode', { id: container.id });
+          } else {
+            unlockTargetVaultMode = 'keyring';
+          }
+        } catch {
+          unlockTargetVaultMode = 'keyring';
+        }
         showUnlockModal = true;
       } else {
         showToast(`Launch failed: ${err}`, 'error');
@@ -1090,6 +1110,7 @@
 <VaultUnlockModal
   isOpen={showUnlockModal}
   container={unlockTarget}
+  vaultMode={unlockTargetVaultMode}
   {isUnlocking}
   error={unlockError}
   onUnlock={handleUnlockVault}
