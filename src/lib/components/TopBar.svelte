@@ -69,10 +69,10 @@
     {#if density === 'minimal' && savedMb > 0}
       <div
         class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono text-emerald-400"
-        title="Active memory saved relative to equivalent Electron instances"
+        title="Estimated memory saved relative to assumed Electron baseline"
       >
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        <span>+{formatMemory(savedMb)} saved</span>
+        <span>+{formatMemory(savedMb)} est. saved</span>
       </div>
     {/if}
 

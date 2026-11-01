@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,11 +66,14 @@ pub type SupervisorState = Arc<Mutex<ProcessSupervisor>>;
 pub fn extract_window_pid(win: &WebviewWindow) -> Option<u32> {
     if let Ok(hwnd) = win.hwnd() {
         extern "system" {
-            fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, lpdw_process_id: *mut u32) -> u32;
+            fn GetWindowThreadProcessId(
+                hwnd: *mut std::ffi::c_void,
+                lpdw_process_id: *mut u32,
+            ) -> u32;
         }
         let mut pid: u32 = 0;
         unsafe {
-            GetWindowThreadProcessId(hwnd.0 as *mut std::ffi::c_void, &mut pid);
+            GetWindowThreadProcessId(hwnd.0, &mut pid);
         }
         if pid != 0 {
             return Some(pid);
@@ -199,7 +202,8 @@ impl ProcessSupervisor {
     }
 
     pub fn get_metrics(&mut self) -> Vec<ContainerProcessMetrics> {
-        self.system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        self.system
+            .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         self.system.refresh_cpu_all();
 
         let my_pid = sysinfo::Pid::from_u32(std::process::id());
@@ -272,9 +276,13 @@ impl ProcessSupervisor {
     }
 }
 
-pub fn hibernate_container(app: &AppHandle, supervisor: &SupervisorState, id: &str) -> Result<String, String> {
+pub fn hibernate_container(
+    app: &AppHandle,
+    supervisor: &SupervisorState,
+    id: &str,
+) -> Result<String, String> {
     let win_label = format!("container-{}", id);
-    
+
     let mut last_url = None;
     if let Some(win) = app.get_webview_window(&win_label) {
         if let Ok(url) = win.url() {
@@ -290,9 +298,18 @@ pub fn hibernate_container(app: &AppHandle, supervisor: &SupervisorState, id: &s
     }
     lock.mark_hibernated(id);
 
-    let container_name = lock.get_container(id).map(|c| c.name).unwrap_or_else(|| id.to_string());
-    println!("[Supervisor] Hibernated container '{}' to reclaim working set memory", id);
-    Ok(format!("Container '{}' has been hibernated", container_name))
+    let container_name = lock
+        .get_container(id)
+        .map(|c| c.name)
+        .unwrap_or_else(|| id.to_string());
+    println!(
+        "[Supervisor] Hibernated container '{}' to reclaim working set memory",
+        id
+    );
+    Ok(format!(
+        "Container '{}' has been hibernated",
+        container_name
+    ))
 }
 
 pub fn start_idle_monitor(app: AppHandle, supervisor: SupervisorState) {
@@ -315,7 +332,8 @@ pub fn start_idle_monitor(app: AppHandle, supervisor: SupervisorState) {
                     lock.get_all_managed()
                         .into_iter()
                         .filter(|c| {
-                            (c.status == ContainerStatus::Running || c.status == ContainerStatus::Idle)
+                            (c.status == ContainerStatus::Running
+                                || c.status == ContainerStatus::Idle)
                                 && !c.is_focused
                                 && now.duration_since(c.last_focused_at) >= timeout
                         })

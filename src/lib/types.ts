@@ -54,3 +54,22 @@ export interface MemoryComparison {
   lockedCount: number;
   totalCount: number;
 }
+
+export interface ElectronStateBaseline {
+  meanMb: number;
+  stddevMb: number;
+}
+
+export interface ElectronBaseline {
+  source: 'assumed' | 'measured';
+  hardware: string;
+  os: string;
+  date: string;
+  runs: number;
+  states: {
+    active: ElectronStateBaseline;
+    idle: ElectronStateBaseline;
+    hibernated: ElectronStateBaseline;
+  };
+}
+

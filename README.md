@@ -1,85 +1,104 @@
 # Vessel
 
-Vessel is a minimal, decoupled desktop web app container engine built with Tauri v2 and SvelteKit. It turns web applications (such as ChatGPT, Linear, Slack, GitHub, and Notion) into standalone desktop apps, each running in a dedicated native window with an isolated profile directory.
+Vessel is a lightweight desktop web application container engine built with **Tauri v2 (Rust)** and **SvelteKit (Svelte 5 with runes)**. It runs web applications (such as GitHub, Spotify, Slack, Linear, and Notion) in isolated native windows with encrypted profile vaults and idle resource hibernation.
 
 ---
 
-## Architectural Design
+## Architecture
 
-Vessel implements a **Decoupled Manager-Container Architecture**:
+Vessel follows a **Decoupled Manager-Container Architecture**:
 
 1. **Manager Mode (`vessel`)**:
-   - Running `vessel` without arguments boots the native Manager GUI.
-   - Built to Raycast/Linear desktop standards using lightweight HTML, Tailwind CSS, and SvelteKit.
-   - Manage installed web apps, trigger in-app launches, create native desktop shortcuts, and wipe sandboxes.
+   - Running `vessel` without arguments launches the Manager dashboard.
+   - Built with Svelte 5 runes, TypeScript, and Tailwind CSS.
+   - Provides a launcher-first interface with dual densities (`minimal` default and `detailed`), status tracking, search filtering, encrypted vault controls, and telemetry visualization.
 
 2. **Container Mode (`vessel --run-container <ID>`)**:
-   - Running `vessel --run-container <ID>` boots **only** a native `WebviewWindow` pointing directly to the target external URL with its isolated data directory.
-   - **The Manager DOM is never loaded or rendered in this mode**, keeping memory overhead minimal and startup instantaneous.
-   - Single-instance IPC forwards secondary launches directly to the running process without socket overhead or process duplication.
-
----
-
-## Profile & Storage Isolation
-
-Cookies, cache, localStorage, indexedDB, and service workers are strictly partitioned per container on the filesystem:
-
-* **Windows**: `%LOCALAPPDATA%\Vessel\profiles\<CONTAINER_ID>`
-* **macOS**: `~/Library/Application Support/Vessel/profiles/<CONTAINER_ID>`
-* **Linux**: `~/.local/share/Vessel/profiles/<CONTAINER_ID>`
-
-Container profiles and cached icons are configured through:
-* Registry: `<VESSEL_ROOT>/profiles.json`
-* Cached Icons: `<VESSEL_ROOT>/icons/<CONTAINER_ID>.png`
+   - Running `vessel --run-container <ID>` boots **only** the target webview window with its isolated data directory.
+   - **The Manager DOM is never loaded or rendered in container mode**, keeping memory overhead minimal and startup instantaneous.
+   - Tauri's single-instance plugin forwards secondary launches to the running instance without process duplication.
 
 ---
 
 ## Core Features
 
-* **Desktop Shortcuts**: Generate native `.lnk` shortcuts (Windows) or `.command` scripts (macOS) pointing directly to `vessel --run-container <ID>` with the container's cached icon.
-* **Auto Title & Favicon Extraction**: Automatically fetches high-resolution site favicons and parses service titles when installing web apps.
-* **Zero Bloat**: No simulated multi-window DOM systems, no background telemetry daemons, and no heavy runtime dependencies.
-* **Strict Security Sandboxing**: Tauri IPC capabilities are scoped strictly to the Manager window; external container webviews have zero Tauri IPC permissions.
+* **Strict Profile Isolation**: Cookies, cache, localStorage, IndexedDB, and service workers are strictly partitioned on disk:
+  * Windows: `%LOCALAPPDATA%\Vessel\profiles\<CONTAINER_ID>`
+  * macOS: `~/Library/Application Support/Vessel/profiles/<CONTAINER_ID>`
+  * Linux: `~/.local/share/Vessel/profiles/<CONTAINER_ID>`
+* **Process Supervisor & Idle Hibernation**: A background task monitors window focus. When an unfocused container exceeds its inactivity threshold (default 15 minutes, configurable globally and per container), its OS webview process is destroyed, freeing working set RAM back to the operating system. Refocusing or clicking "Wake" recreates the window at the persisted route.
+* **Encrypted Profile Vaults**: Profile data can be encrypted at rest using authenticated **AES-256-GCM** (with GHASH authentication tag) and **Argon2id** key derivation. Vault keys can be stored securely in the native OS credential store (Windows Credential Manager / DPAPI, macOS Keychain) or protected with a master passphrase.
+* **Dual-Density Dashboard**: A single component tree supporting both `minimal` (clean launcher with status indicators and primary action) and `detailed` (live RAM/CPU sparklines, idle countdown meters, secondary actions, and baseline comparison).
+* **Desktop Shortcuts**: Creates native `.lnk` shortcuts on Windows (or `.command` scripts on macOS) pointing directly to `vessel --run-container <ID>` with the application's cached icon.
+
+---
+
+## Limitations
+
+* **Hibernation State Loss**: Hibernation reclaims host memory by terminating the underlying webview process (`win.destroy()`). This releases 100% of the working set memory, but **in-page state is lost** (e.g. playing audio streams, active video/voice calls, unsubmitted form inputs, and transient WebSockets). To prevent interruption, enable the **"Never hibernate"** toggle in the container's preferences menu for communication or media applications.
+* **Protection at Rest Only**: Encrypted vaults protect profile data when sealed on disk (defending against offline filesystem inspection and cold backups). When a container is unlocked and actively running, its profile data is temporarily unpacked to disk so the native webview can operate on cookies and storage.
+* **Windows-First Implementation**: Windows 10/11 with the Microsoft Edge WebView2 runtime is the primary platform. While macOS and Linux code paths exist for basic window creation and keyrings, features like Win32 process thread extraction and shortcut generation are tailored for Windows.
 
 ---
 
 ## Tech Stack
 
-* **Frontend**: SvelteKit, TypeScript, Tailwind CSS, Vite
-* **Backend**: Rust, Tauri v2, `tauri-plugin-single-instance`, `tauri-plugin-opener`
+* **Frontend**: SvelteKit 2, Svelte 5 (runes: `$state`, `$derived`, `$effect`), TypeScript, Tailwind CSS, Vite
+* **Backend**: Rust (2021 edition), Tauri v2, `sysinfo`, `aes-gcm`, `argon2`, `keyring`, `zeroize`
+* **Test Suites**: Vitest (frontend unit tests), Cargo test (Rust backend cryptographic and supervisor test harness)
 
 ---
 
-## Development
+## Getting Started
 
-Install dependencies:
+### Prerequisites
+
+* Node.js 18+ and npm
+* Rust 1.77+ with Cargo
+* Windows 10/11 with WebView2 runtime installed (standard on modern Windows)
+
+### Installation
 
 ```bash
 npm install
 ```
 
-Run in development mode:
+### Development
+
+Run the frontend and Tauri backend concurrently:
 
 ```bash
 npm run tauri dev
 ```
 
-Run frontend type and diagnostic checks:
+### Running Checks & Tests
 
+Frontend type check:
 ```bash
 npm run check
 ```
 
-Run unit tests:
-
+Frontend unit tests:
 ```bash
 npm test
+```
+
+Backend test suite:
+```bash
 cd src-tauri && cargo test
 ```
 
-Build production executable:
+Backend linter & formatter check:
+```bash
+cd src-tauri
+cargo clippy
+cargo fmt --check
+```
+
+### Production Build
 
 ```bash
+npm run build
 npm run tauri build
 ```
 

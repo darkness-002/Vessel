@@ -1,0 +1,21 @@
+{
+  "source": "assumed",
+  "hardware": "Reference Desktop (Uncalibrated)",
+  "os": "Windows 11",
+  "date": "2026-10-23",
+  "runs": 0,
+  "states": {
+    "active": {
+      "meanMb": 348.0,
+      "stddevMb": 32.0
+    },
+    "idle": {
+      "meanMb": 312.0,
+      "stddevMb": 18.0
+    },
+    "hibernated": {
+      "meanMb": 305.0,
+      "stddevMb": 12.0
+    }
+  }
+}

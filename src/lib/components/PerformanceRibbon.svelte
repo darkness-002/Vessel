@@ -60,7 +60,7 @@
 
     <!-- Memory Saved vs Electron -->
     <div class="flex items-center gap-2">
-      <span class="text-zinc-500 font-sans text-[11px]">Reclaimed vs. Electron:</span>
+      <span class="text-zinc-500 font-sans text-[11px]">Est. Saved vs. Electron:</span>
       <span class="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 font-semibold text-emerald-300">
         +{formatMemory(totalSavedRam)}
       </span>

@@ -1,12 +1,12 @@
 #![windows_subsystem = "windows"]
 
-mod profile;
 mod commands;
+mod profile;
 pub mod supervisor;
 pub mod vault;
 
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, WebviewUrl, webview::WebviewWindowBuilder};
+use tauri::{webview::WebviewWindowBuilder, Manager, WebviewUrl};
 
 pub fn get_stealth_user_agent() -> &'static str {
     #[cfg(target_os = "macos")]
@@ -35,17 +35,15 @@ pub fn open_manager_window(app: &tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let builder = WebviewWindowBuilder::new(
-        app,
-        "manager",
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("Vessel")
-    .inner_size(960.0, 680.0)
-    .min_inner_size(700.0, 500.0)
-    .resizable(true);
+    let builder = WebviewWindowBuilder::new(app, "manager", WebviewUrl::App("index.html".into()))
+        .title("Vessel")
+        .inner_size(960.0, 680.0)
+        .min_inner_size(700.0, 500.0)
+        .resizable(true);
 
-    builder.build().map_err(|e| format!("Failed to create Manager window: {e}"))?;
+    builder
+        .build()
+        .map_err(|e| format!("Failed to create Manager window: {e}"))?;
     Ok(())
 }
 
@@ -84,7 +82,9 @@ pub fn is_allowed_container_navigation(url: &url::Url, base_host: &str, root_dom
     }
 
     // 2. Same root domain (e.g. accounts.spotify.com vs open.spotify.com)
-    if !root_domain.is_empty() && (target_host == root_domain || target_host.ends_with(&format!(".{root_domain}"))) {
+    if !root_domain.is_empty()
+        && (target_host == root_domain || target_host.ends_with(&format!(".{root_domain}")))
+    {
         return true;
     }
 
@@ -112,7 +112,10 @@ pub fn is_allowed_container_navigation(url: &url::Url, base_host: &str, root_dom
         "linkedin.com",
     ];
 
-    if KNOWN_AUTH_DOMAINS.iter().any(|&auth| target_host == auth || target_host.ends_with(&format!(".{auth}"))) {
+    if KNOWN_AUTH_DOMAINS
+        .iter()
+        .any(|&auth| target_host == auth || target_host.ends_with(&format!(".{auth}")))
+    {
         return true;
     }
 
@@ -173,39 +176,37 @@ pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), S
     let app_handle_nav = app.clone();
     let id_nav = id.to_string();
 
-    let builder = WebviewWindowBuilder::new(
-        app,
-        &win_label,
-        WebviewUrl::External(external_url),
-    )
-    .title(&container.name)
-    .inner_size(1200.0, 800.0)
-    .min_inner_size(600.0, 450.0)
-    .resizable(true)
-    .user_agent(get_stealth_user_agent())
-    .data_directory(profile_dir)
-    .on_navigation(move |nav_url| {
-        if let Some(state) = app_handle_nav.try_state::<supervisor::SupervisorState>() {
-            if let Ok(mut sup) = state.lock() {
-                sup.update_url(&id_nav, nav_url.as_str());
+    let builder = WebviewWindowBuilder::new(app, &win_label, WebviewUrl::External(external_url))
+        .title(&container.name)
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(600.0, 450.0)
+        .resizable(true)
+        .user_agent(get_stealth_user_agent())
+        .data_directory(profile_dir)
+        .on_navigation(move |nav_url| {
+            if let Some(state) = app_handle_nav.try_state::<supervisor::SupervisorState>() {
+                if let Ok(mut sup) = state.lock() {
+                    sup.update_url(&id_nav, nav_url.as_str());
+                }
             }
-        }
 
-        // Ensure the initial load of container.url always passes the check
-        if nav_url == &initial_url || nav_url.as_str() == initial_url.as_str() {
-            return true;
-        }
+            // Ensure the initial load of container.url always passes the check
+            if nav_url == &initial_url || nav_url.as_str() == initial_url.as_str() {
+                return true;
+            }
 
-        if is_allowed_container_navigation(nav_url, &base_host, &root_domain) {
-            true
-        } else {
-            // Open external URLs in default system browser
-            let _ = tauri_plugin_opener::open_url(nav_url.as_str(), None::<&str>);
-            false
-        }
-    });
+            if is_allowed_container_navigation(nav_url, &base_host, &root_domain) {
+                true
+            } else {
+                // Open external URLs in default system browser
+                let _ = tauri_plugin_opener::open_url(nav_url.as_str(), None::<&str>);
+                false
+            }
+        });
 
-    let win = builder.build().map_err(|e| format!("Failed to create container window for '{id}': {e}"))?;
+    let win = builder
+        .build()
+        .map_err(|e| format!("Failed to create container window for '{id}': {e}"))?;
 
     let win_pid = supervisor::extract_window_pid(&win);
     if let Some(state) = app.try_state::<supervisor::SupervisorState>() {
@@ -272,7 +273,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let initial_run_container = parse_run_container_id(&args);
 
-    let mut init_supervisor = supervisor::ProcessSupervisor::new(supervisor::SupervisorConfig::default());
+    let mut init_supervisor =
+        supervisor::ProcessSupervisor::new(supervisor::SupervisorConfig::default());
     for container in profile::load_containers() {
         init_supervisor.register_container(&container.id, &container.name, &container.url);
     }
@@ -295,15 +297,15 @@ fn main() {
                 // Container Mode: vessel --run-container <ID>
                 // Boots ONLY the targeted WebviewWindow pointing to the container URL.
                 // Never load or render the Manager DOM in this mode.
-                if let Err(e) = open_or_focus_container(&app.handle(), &container_id) {
+                if let Err(e) = open_or_focus_container(app.handle(), &container_id) {
                     eprintln!("Error booting container '{container_id}': {e}");
                     // If invalid ID, fallback to Manager
-                    let _ = open_manager_window(&app.handle());
+                    let _ = open_manager_window(app.handle());
                 }
             } else {
                 // Manager Mode: vessel (no arguments)
                 // Boots standard Manager UI to create, list, and launch containers.
-                open_manager_window(&app.handle())?;
+                open_manager_window(app.handle())?;
             }
             Ok(())
         })
@@ -344,73 +346,146 @@ mod tests {
 
         // Same domain
         let url_same = url::Url::parse("https://linear.app/my-team/issue").unwrap();
-        assert!(is_allowed_container_navigation(&url_same, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_same,
+            base_host,
+            root_domain
+        ));
 
         // Subdomain
         let url_sub = url::Url::parse("https://app.linear.app/settings").unwrap();
-        assert!(is_allowed_container_navigation(&url_sub, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_sub,
+            base_host,
+            root_domain
+        ));
 
         // Browser internal scheme
         let url_about = url::Url::parse("about:blank").unwrap();
-        assert!(is_allowed_container_navigation(&url_about, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_about,
+            base_host,
+            root_domain
+        ));
 
         // Known OAuth identity providers
-        let url_google = url::Url::parse("https://accounts.google.com/o/oauth2/auth?client_id=123").unwrap();
-        assert!(is_allowed_container_navigation(&url_google, base_host, root_domain));
+        let url_google =
+            url::Url::parse("https://accounts.google.com/o/oauth2/auth?client_id=123").unwrap();
+        assert!(is_allowed_container_navigation(
+            &url_google,
+            base_host,
+            root_domain
+        ));
 
-        let url_ms = url::Url::parse("https://login.microsoftonline.com/common/oauth2/authorize").unwrap();
-        assert!(is_allowed_container_navigation(&url_ms, base_host, root_domain));
+        let url_ms =
+            url::Url::parse("https://login.microsoftonline.com/common/oauth2/authorize").unwrap();
+        assert!(is_allowed_container_navigation(
+            &url_ms,
+            base_host,
+            root_domain
+        ));
 
         let url_apple = url::Url::parse("https://appleid.apple.com/auth/authorize").unwrap();
-        assert!(is_allowed_container_navigation(&url_apple, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_apple,
+            base_host,
+            root_domain
+        ));
 
         let url_github = url::Url::parse("https://github.com/login/oauth/authorize").unwrap();
-        assert!(is_allowed_container_navigation(&url_github, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_github,
+            base_host,
+            root_domain
+        ));
 
         let url_okta = url::Url::parse("https://company.okta.com/oauth2/v1/authorize").unwrap();
-        assert!(is_allowed_container_navigation(&url_okta, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_okta,
+            base_host,
+            root_domain
+        ));
 
         let url_auth0 = url::Url::parse("https://company.auth0.com/authorize").unwrap();
-        assert!(is_allowed_container_navigation(&url_auth0, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_auth0,
+            base_host,
+            root_domain
+        ));
 
         let url_clerk = url::Url::parse("https://subdomain.clerk.accounts.dev/sign-in").unwrap();
-        assert!(is_allowed_container_navigation(&url_clerk, base_host, root_domain));
+        assert!(is_allowed_container_navigation(
+            &url_clerk,
+            base_host,
+            root_domain
+        ));
 
         // External third-party URLs (must be blocked in container so they open in external browser)
         let url_news = url::Url::parse("https://news.ycombinator.com/item?id=456").unwrap();
-        assert!(!is_allowed_container_navigation(&url_news, base_host, root_domain));
+        assert!(!is_allowed_container_navigation(
+            &url_news,
+            base_host,
+            root_domain
+        ));
 
         let url_external = url::Url::parse("https://www.theverge.com/tech").unwrap();
-        assert!(!is_allowed_container_navigation(&url_external, base_host, root_domain));
+        assert!(!is_allowed_container_navigation(
+            &url_external,
+            base_host,
+            root_domain
+        ));
     }
 
     #[test]
     fn test_create_shortcut_existing_container() {
         if profile::get_container("spotify").is_some() {
-            let res = tauri::async_runtime::block_on(commands::create_shortcut("spotify".to_string()));
-            assert!(res.is_ok(), "create_shortcut for spotify should succeed: {:?}", res);
+            let res =
+                tauri::async_runtime::block_on(commands::create_shortcut("spotify".to_string()));
+            assert!(
+                res.is_ok(),
+                "create_shortcut for spotify should succeed: {:?}",
+                res
+            );
 
             let ico_path = profile::get_profile_icon_path("spotify");
-            assert!(ico_path.exists(), "Profile icon file should exist at {:?}", ico_path);
+            assert!(
+                ico_path.exists(),
+                "Profile icon file should exist at {:?}",
+                ico_path
+            );
 
             let meta = std::fs::metadata(&ico_path).expect("Icon metadata should be readable");
             assert!(meta.len() > 0, "Icon file should not be empty");
 
             // Verify container config was updated with icon_path
             let updated = profile::get_container("spotify").expect("Container should exist");
-            assert!(updated.icon_path.is_some(), "Container icon_path should be populated");
+            assert!(
+                updated.icon_path.is_some(),
+                "Container icon_path should be populated"
+            );
         }
 
         if profile::get_container("github").is_some() {
-            let res = tauri::async_runtime::block_on(commands::create_shortcut("github".to_string()));
-            assert!(res.is_ok(), "create_shortcut for github should succeed: {:?}", res);
+            let res =
+                tauri::async_runtime::block_on(commands::create_shortcut("github".to_string()));
+            assert!(
+                res.is_ok(),
+                "create_shortcut for github should succeed: {:?}",
+                res
+            );
 
             let ico_path = profile::get_profile_icon_path("github");
-            assert!(ico_path.exists(), "Profile icon file should exist at {:?}", ico_path);
+            assert!(
+                ico_path.exists(),
+                "Profile icon file should exist at {:?}",
+                ico_path
+            );
 
             let updated = profile::get_container("github").expect("Container should exist");
-            assert!(updated.icon_path.is_some(), "Container icon_path should be populated");
+            assert!(
+                updated.icon_path.is_some(),
+                "Container icon_path should be populated"
+            );
         }
     }
 }
-

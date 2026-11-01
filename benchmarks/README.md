@@ -1,43 +1,34 @@
-# Vessel Automated Benchmarking & Academic Evaluation Suite
+# Vessel Performance Benchmarking Suite
 
-This directory contains the automated performance benchmarking harness and publication plotting suite for **Vessel** (Tauri v2 + Rust), evaluated against **Electron** and **Google Chrome** (standalone SSB / PWA profiles).
+This directory contains the benchmarking harness and plotting suite for **Vessel** (Tauri v2 + Rust), evaluated against **Electron** and **Google Chrome**.
 
 ---
 
-## 1. Experimental Methodology & Setup
+### IMPORTANT NOTICE: Real Measurements vs. Synthetic Models
+
+* **Live Mode (Default)**: Measures actual running processes on real host hardware using `psutil`. Live execution launches the compiled Vessel application and comparative runtimes to collect real OS working-set telemetry.
+* **Synthetic Prototyping (`--synthetic`)**: Runs an offline mathematical simulation based on target baseline models. All synthetic data files contain `SYNTHETIC` in their filename, print a console warning, and have watermark stamps on generated charts. Previously generated synthetic demonstration figures are stored in [`benchmarks/synthetic_example/`](./synthetic_example/).
+
+---
+
+## 1. Methodology & Metrics
 
 ### Evaluated Targets:
-1. **Vessel (Tauri v2 + Rust)**:
-   - Evaluated in two operational regimes:
-     * **Active State**: Dedicated native `WebviewWindow` pointing directly to target web app with strictly partitioned filesystem profile (`data_directory`). The Manager DOM is never loaded or rendered in container mode.
-     * **Hibernated State**: Intelligent background process supervisor terminates the underlying OS webview process upon idle timeout ($\ge 15\text{s}$ in testing, $15\text{min}$ in production), freeing all working set memory back to the OS while retaining a lightweight routing stub in memory.
-2. **Electron (v32+)**:
-   - Standard desktop web container bundling a dedicated Chromium engine, Node.js runtime, and V8 heap per instance.
-3. **Google Chrome (v128+)**:
-   - Chrome standalone application window (`chrome.exe --app=<URL> --user-data-dir=<PROFILE_DIR>`).
+1. **Vessel (Tauri v2 + Rust)**: Dedicated webview processes per container profile. Unfocused containers are hibernated by the supervisor after inactivity, destroying the webview process and releasing memory to the host OS.
+2. **Electron**: Dedicated Chromium/Node.js runtime per application instance.
+3. **Google Chrome**: Standalone application profile instances (`--app=<URL> --user-data-dir=<DIR>`).
+
+### Lifecycle Phases:
+* **Phase A: Cold Launch (0 – 5s)**: Time from process invocation to initial navigation/render (ms).
+* **Phase B: Active Usage (5 – 65s)**: Resident set size (RSS in MB) and CPU utilization during active interaction.
+* **Phase C: Background / Inactivity (65 – 185s)**: Tests whether the runtime frees inactive resources.
+* **Phase D: Wake & Refocus (185 – 210s)**: Time and memory required to wake or refocus the window.
 
 ---
 
-## 2. Benchmark Phases & Workloads
+## 2. Setup & Requirements
 
-### Standard 4-Phase Operational Lifecycle:
-* **Phase A: Cold Launch (0 – 5s)**: Measures time-to-interactive and initial process creation overhead (ms).
-* **Phase B: Active Steady-State Usage (5 – 65s)**: Measures active CPU utilization and resident set size (RSS in MB) during typical user interactions.
-* **Phase C: Background / Idle State (65 – 185s)**: Simulates window blur / loss of user focus. Tests whether the runtime detects inactivity and frees working set RAM.
-* **Phase D: Wake & Refocus Event (185 – 210s)**: Measures wake restoration latency (ms) and re-instantiation memory footprint.
-
-### Multi-Instance Concurrency Scaling ($N \in \{1, 3, 5\}$):
-* **Workload 1**: Spotify Web (`https://open.spotify.com`)
-* **Workload 2**: Linear (`https://linear.app`)
-* **Workload 3**: Slack Web (`https://app.slack.com`)
-* **Workload 4**: GitHub (`https://github.com`)
-* **Workload 5**: Notion (`https://notion.so`)
-
----
-
-## 3. Installation & Requirements
-
-Ensure Python 3.10+ is available:
+Install Python dependencies:
 
 ```bash
 pip install -r benchmarks/requirements.txt
@@ -45,31 +36,31 @@ pip install -r benchmarks/requirements.txt
 
 ---
 
-## 4. Running the Benchmarks
+## 3. Running Benchmarks
 
-### Quick Mode (Rapid Verification):
+### Live Empirical Measurement (Default):
 ```bash
-python benchmarks/run_benchmarks.py --quick
+python benchmarks/run_benchmarks.py --runs 10
 ```
 
-### Full Benchmark (5 Iterations across all workloads):
-```bash
-python benchmarks/run_benchmarks.py --runs 5
-```
+> Note: Live measurement requires the compiled Vessel binary and Electron test shell. If these are not yet built, the harness will exit with clear setup instructions instead of inventing numbers.
 
-Outputs raw telemetry samples to `benchmarks/results/benchmark_data.csv`.
+### Synthetic Model Generation (Prototyping Only):
+```bash
+python benchmarks/run_benchmarks.py --synthetic --runs 5
+```
+Outputs to `benchmarks/synthetic_example/SYNTHETIC_benchmark_data.csv`.
 
 ---
 
-## 5. Generating Publication-Quality Figures
+## 4. Generating Figures
 
-Execute the analysis and visualization suite:
-
+To generate figures from synthetic data:
 ```bash
-python benchmarks/analyze_and_plot.py
+python benchmarks/analyze_and_plot.py --synthetic
 ```
 
-Generated Figures:
-1. **`benchmarks/results/fig1_memory_timeline.png`**: Resident Working Set Memory (RSS in MB) over time across Vessel, Electron, and Chrome through all 4 lifecycle phases.
-2. **`benchmarks/results/fig2_startup_latency.png`**: Cold launch latency comparison with variance error bars.
-3. **`benchmarks/results/fig3_multi_instance_scaling.png`**: Multi-instance concurrency scaling curves from 1 to 5 simultaneous apps.
+To generate figures from live empirical data:
+```bash
+python benchmarks/analyze_and_plot.py --input benchmarks/results/benchmark_data.csv
+```

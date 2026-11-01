@@ -1,5 +1,3 @@
-use std::io::{Cursor, Read, Write};
-use std::path::{Path, PathBuf};
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -9,6 +7,8 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use rand::RngExt;
+use std::io::{Cursor, Read, Write};
+use std::path::{Path, PathBuf};
 use tar::{Archive, Builder};
 use zeroize::Zeroize;
 
@@ -34,7 +34,9 @@ impl std::fmt::Display for VaultError {
             VaultError::Crypto(e) => write!(f, "Cryptographic error: {e}"),
             VaultError::Keyring(e) => write!(f, "Keyring error: {e}"),
             VaultError::Format(e) => write!(f, "Vault format error: {e}"),
-            VaultError::InvalidPassphrase => write!(f, "Invalid vault passphrase or corrupted payload"),
+            VaultError::InvalidPassphrase => {
+                write!(f, "Invalid vault passphrase or corrupted payload")
+            }
         }
     }
 }
@@ -72,7 +74,10 @@ fn is_dir_empty(path: &Path) -> bool {
         .unwrap_or(true)
 }
 
-pub fn derive_key_from_passphrase(passphrase: &str, salt: &[u8; SALT_LEN]) -> Result<[u8; 32], VaultError> {
+pub fn derive_key_from_passphrase(
+    passphrase: &str,
+    salt: &[u8; SALT_LEN],
+) -> Result<[u8; 32], VaultError> {
     let mut key = [0u8; 32];
     Argon2::default()
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
@@ -128,7 +133,9 @@ pub fn read_vault_salt(vault_path: &Path) -> Result<[u8; SALT_LEN], VaultError> 
     file.read_exact(&mut header)?;
 
     if &header[..10] != VAULT_MAGIC {
-        return Err(VaultError::Format("Invalid vault file magic signature".to_string()));
+        return Err(VaultError::Format(
+            "Invalid vault file magic signature".to_string(),
+        ));
     }
 
     let mut salt = [0u8; SALT_LEN];
@@ -263,12 +270,16 @@ pub fn decrypt_and_unpack_vault(
 
     let mut vault_data = std::fs::read(vault_src)?;
     if vault_data.len() < HEADER_LEN {
-        return Err(VaultError::Format("Corrupted vault: header too small".into()));
+        return Err(VaultError::Format(
+            "Corrupted vault: header too small".into(),
+        ));
     }
 
     // Verify magic header
     if &vault_data[..10] != VAULT_MAGIC {
-        return Err(VaultError::Format("Invalid vault file magic signature".into()));
+        return Err(VaultError::Format(
+            "Invalid vault file magic signature".into(),
+        ));
     }
 
     let nonce_bytes = &vault_data[10 + SALT_LEN..HEADER_LEN];
@@ -307,7 +318,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 }
 
 fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("Invalid hex length".to_string());
     }
     (0..hex.len())
@@ -322,7 +333,10 @@ mod tests {
 
     #[test]
     fn test_vault_pack_and_unpack() {
-        let temp_dir = std::env::temp_dir().join(format!("vessel_vault_test_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "vessel_vault_test_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
         let profile_dir = temp_dir.join("profile");
         let vault_file = temp_dir.join("test.vault");
         let restored_dir = temp_dir.join("restored");
@@ -339,13 +353,19 @@ mod tests {
             .expect("Packing and encryption should succeed");
 
         assert!(vault_file.exists());
-        assert!(!profile_dir.exists(), "Original profile dir should be securely deleted");
+        assert!(
+            !profile_dir.exists(),
+            "Original profile dir should be securely deleted"
+        );
 
         // Decrypt & Unpack
         decrypt_and_unpack_vault("test-app", &vault_file, &restored_dir, &key)
             .expect("Decryption and unpacking should succeed");
 
-        assert!(!vault_file.exists(), "Vault file should be cleaned up on extraction");
+        assert!(
+            !vault_file.exists(),
+            "Vault file should be cleaned up on extraction"
+        );
         assert!(restored_dir.join("cookies.sqlite").exists());
         assert_eq!(
             std::fs::read(restored_dir.join("cookies.sqlite")).unwrap(),
@@ -373,7 +393,10 @@ mod tests {
 
     #[test]
     fn test_vault_invalid_key_fails() {
-        let temp_dir = std::env::temp_dir().join(format!("vessel_vault_fail_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "vessel_vault_fail_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
         let profile_dir = temp_dir.join("profile");
         let vault_file = temp_dir.join("test.vault");
         let restored_dir = temp_dir.join("restored");

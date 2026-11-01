@@ -1,5 +1,9 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
+  import baselineData from '$lib/data/electron_baseline.json';
+  import type { ElectronBaseline } from '$lib/types';
+
+  const baseline = baselineData as ElectronBaseline;
 
   interface Props {
     activeCount: number;
@@ -19,26 +23,20 @@
     totalActiveRam = 0,
   }: Props = $props();
 
-  // Benchmarked empirical measurements from Vessel research suite:
-  // Electron v32+: Active = 348.0 MB, Idle = 312.0 MB, Background/Closed retained = 305.0 MB
-  const ELECTRON_ACTIVE_MB = 348.0;
-  const ELECTRON_IDLE_MB = 312.0;
-  const ELECTRON_HIBERNATED_MB = 305.0;
-
   let runningCount = $derived(Math.max(0, activeCount - idleCount));
 
-  let measuredElectronMb = $derived.by(() => {
+  let electronEquivalentMb = $derived.by(() => {
     if (totalContainers === 0) return 0;
-    const activeElectron = runningCount * ELECTRON_ACTIVE_MB;
-    const idleElectron = idleCount * ELECTRON_IDLE_MB;
-    const hibernatedElectron = (hibernatedCount + lockedCount) * ELECTRON_HIBERNATED_MB;
+    const activeElectron = runningCount * baseline.states.active.meanMb;
+    const idleElectron = idleCount * baseline.states.idle.meanMb;
+    const hibernatedElectron = (hibernatedCount + lockedCount) * baseline.states.hibernated.meanMb;
     return activeElectron + idleElectron + hibernatedElectron;
   });
 
-  let savedMb = $derived(Math.max(0, measuredElectronMb - totalActiveRam));
+  let savedMb = $derived(Math.max(0, electronEquivalentMb - totalActiveRam));
 
   let reductionPercentage = $derived(
-    measuredElectronMb > 0 ? Math.min(100, Math.round((savedMb / measuredElectronMb) * 100)) : 0
+    electronEquivalentMb > 0 ? Math.min(100, Math.round((savedMb / electronEquivalentMb) * 100)) : 0
   );
 
   function formatMemory(mb: number): string {
@@ -60,7 +58,7 @@
         <span class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
           Telemetry & Memory Supervision
         </span>
-        {#if measuredElectronMb > 0}
+        {#if electronEquivalentMb > 0}
           <span
             class="px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
           >
@@ -71,15 +69,23 @@
 
       <div>
         <div class="text-2xl font-bold font-mono tracking-tight text-zinc-100">
-          +{formatMemory(savedMb)} reclaimed
+          +{formatMemory(savedMb)} est. saved
+        </div>
+        <div class="flex items-center gap-2 mt-1">
+          <span class="text-xs font-medium text-zinc-300">
+            Estimated vs. Electron baseline
+          </span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/80">
+            {baseline.source === 'measured' ? `measured on ${baseline.hardware}` : 'assumed'}
+          </span>
         </div>
         <p class="text-xs text-zinc-400 mt-1 leading-relaxed max-w-xl">
-          Empirical comparison of live Vessel processes versus measured Chromium/Electron instances running identical active web workloads.
+          Estimated comparison of live Vessel processes versus reference Electron baseline profiles ({baseline.source === 'measured' ? `empirically measured on ${baseline.hardware}` : 'assumed baseline model'}).
         </p>
       </div>
 
       <!-- Comparative Bar Visualizer -->
-      {#if measuredElectronMb > 0}
+      {#if electronEquivalentMb > 0}
         <div class="space-y-2 pt-1 max-w-lg">
           <!-- Vessel bar -->
           <div class="space-y-1">
@@ -93,7 +99,7 @@
             <div class="h-2 w-full rounded bg-zinc-800 overflow-hidden">
               <div
                 class="h-full bg-emerald-400 rounded transition-all duration-300"
-                style="width: {Math.max(4, Math.min(100, (totalActiveRam / measuredElectronMb) * 100))}%"
+                style="width: {Math.max(4, Math.min(100, (totalActiveRam / electronEquivalentMb) * 100))}%"
               ></div>
             </div>
           </div>
@@ -103,9 +109,11 @@
             <div class="flex items-center justify-between text-[11px] font-mono text-zinc-400">
               <span class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-zinc-600"></span>
-                <span>Electron Equivalent Baseline</span>
+                <span>
+                  Electron Baseline ({baseline.source === 'measured' ? `measured on ${baseline.hardware}` : 'assumed'})
+                </span>
               </span>
-              <span>{formatMemory(measuredElectronMb)}</span>
+              <span>{formatMemory(electronEquivalentMb)}</span>
             </div>
             <div class="h-2 w-full rounded bg-zinc-800 overflow-hidden">
               <div class="h-full bg-zinc-600 rounded w-full"></div>

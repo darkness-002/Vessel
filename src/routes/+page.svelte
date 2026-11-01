@@ -10,6 +10,7 @@
   import { showToast } from '$lib/stores/toastStore';
   import { appSettings, updateAppSettings, toggleDensity } from '$lib/stores/appSettings';
   import { getDemoState } from '$lib/fixtures/demoContainers';
+  import baselineData from '$lib/data/electron_baseline.json';
 
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
@@ -232,12 +233,12 @@
       .reduce((sum, [, m]) => sum + (m.memoryMb || 0), 0)
   );
 
-  // Measured memory saved relative to ~348 MB peer Electron instances
+  // Estimated memory saved relative to Electron baseline
   let totalSavedRam = $derived(
     Math.max(
       0,
-      (hibernatedCount + lockedCount) * 348 +
-        Math.max(0, activeCount * 348 - totalActiveRam)
+      (hibernatedCount + lockedCount) * baselineData.states.active.meanMb +
+        Math.max(0, activeCount * baselineData.states.active.meanMb - totalActiveRam)
     )
   );
 
@@ -778,7 +779,7 @@
     <!-- Main Scrollable Area -->
     <main class="flex-1 overflow-y-auto vessel-scroll p-6 lg:p-8 flex flex-col">
       <div class="max-w-7xl w-full mx-auto space-y-6 flex-1">
-        <!-- Detailed Mode Hero Card (comparing live memory with measured Electron equivalent) -->
+        <!-- Detailed Mode Hero Card (comparing live memory with Electron baseline) -->
         {#if $appSettings.density === 'detailed'}
           <MemoryHero
             {activeCount}
@@ -833,7 +834,7 @@
             </div>
             <h2 class="text-sm font-semibold text-zinc-100">No web apps installed</h2>
             <p class="text-xs text-zinc-400 max-w-sm mt-1 mb-6 leading-relaxed">
-              Launch web apps in dedicated native windows with isolated cookies, hardware-encrypted vaults, and idle hibernation.
+              Launch web apps in dedicated native windows with isolated cookies, encrypted profile vaults, and idle hibernation.
             </p>
 
             <button

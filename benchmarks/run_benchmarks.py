@@ -13,9 +13,6 @@ Measures:
   - Cold Startup Latency (Time to Interactive / Render in ms)
   - Wake-from-Hibernation Latency (ms)
   - Multi-instance concurrent scaling across 1, 3, and 5 concurrent web applications
-
-Output:
-  - `benchmarks/results/benchmark_data.csv`
 """
 
 import os
@@ -43,9 +40,8 @@ WORKLOADS = [
     {"id": "notion", "name": "Notion", "url": "https://notion.so"},
 ]
 
-# Standard published baseline coefficients for empirical validation
-# (calibrated from hardware measurements of Electron v32+, Chrome 128+, and WebView2)
-TARGET_BASELINES = {
+# Standard baseline model coefficients (used ONLY when --synthetic is explicitly passed)
+SYNTHETIC_BASELINES = {
     "Vessel": {
         "cold_start_mean_ms": 182.4,
         "cold_start_std_ms": 14.8,
@@ -55,7 +51,7 @@ TARGET_BASELINES = {
         "active_rss_variance": 4.5,
         "active_cpu_mean": 0.8,
         "idle_active_rss_mb": 38.5,
-        "hibernated_rss_mb": 0.0,  # Webview process destroyed by supervisor
+        "hibernated_rss_mb": 0.0,
         "hibernated_cpu": 0.0,
         "idle_timeout_sec": 30.0,
     },
@@ -68,7 +64,7 @@ TARGET_BASELINES = {
         "active_rss_variance": 32.0,
         "active_cpu_mean": 2.9,
         "idle_active_rss_mb": 312.0,
-        "hibernated_rss_mb": 305.0,  # Electron does not discard V8 heap or renderers
+        "hibernated_rss_mb": 305.0,
         "hibernated_cpu": 0.3,
         "idle_timeout_sec": 30.0,
     },
@@ -81,7 +77,7 @@ TARGET_BASELINES = {
         "active_rss_variance": 18.0,
         "active_cpu_mean": 1.7,
         "idle_active_rss_mb": 172.0,
-        "hibernated_rss_mb": 165.0,  # Separate profile retains dedicated renderer
+        "hibernated_rss_mb": 165.0,
         "hibernated_cpu": 0.15,
         "idle_timeout_sec": 30.0,
     },
@@ -134,33 +130,29 @@ def simulate_sample_telemetry(
     num_instances: int,
     rng: np.random.Generator,
 ) -> Tuple[float, float]:
-    """Generate statistically faithful empirical samples based on architectural model."""
-    meta = TARGET_BASELINES[target]
+    """Generate model-derived synthetic telemetry. ONLY used when --synthetic is active."""
+    meta = SYNTHETIC_BASELINES[target]
     base_rss = meta["active_base_rss_mb"]
     rss_var = meta["active_rss_variance"]
 
     if phase == "Cold Launch":
-        # Spikes during V8 / Blink runtime initialization
         init_spike = 1.35 if target == "Electron" else 1.15
         rss = (base_rss * init_spike + rng.normal(0, rss_var * 0.5)) * num_instances
         cpu = (meta["active_cpu_mean"] * 4.5 + rng.uniform(0.5, 2.0)) * num_instances
     elif phase == "Active Usage":
-        # Steady state active consumption with realistic drift
         drift = np.sin(t_sec * 0.1) * 4.0
         rss = (base_rss + drift + rng.normal(0, rss_var)) * num_instances
         cpu = max(0.1, (meta["active_cpu_mean"] + rng.normal(0, 0.4)) * num_instances)
     elif phase == "Idle / Background":
         if target == "Vessel":
-            # Idle supervisor kicks in: after idle timeout, working set drops to 0 MB
-            idle_elapsed = t_sec - 65.0  # Phase C start
-            if idle_elapsed >= 15.0:  # Timeout threshold in test harness
+            idle_elapsed = t_sec - 65.0
+            if idle_elapsed >= 15.0:
                 rss = meta["hibernated_rss_mb"] * num_instances
                 cpu = 0.0
             else:
                 rss = (meta["idle_active_rss_mb"] + rng.normal(0, 2.0)) * num_instances
                 cpu = max(0.0, rng.normal(0.08, 0.03)) * num_instances
         elif target == "Electron":
-            # Retains virtually all heap memory
             rss = (meta["idle_active_rss_mb"] + rng.normal(0, 8.0)) * num_instances
             cpu = max(0.1, (meta["hibernated_cpu"] + rng.normal(0, 0.08))) * num_instances
         else:  # Google Chrome
@@ -168,7 +160,6 @@ def simulate_sample_telemetry(
             cpu = max(0.05, (meta["hibernated_cpu"] + rng.normal(0, 0.05))) * num_instances
     elif phase == "Wake & Refocus":
         if target == "Vessel":
-            # Reconstructs webview window at persisted route
             rss = (base_rss * 0.95 + rng.normal(0, 3.0)) * num_instances
             cpu = (meta["active_cpu_mean"] * 1.8 + rng.normal(0, 0.3)) * num_instances
         else:
@@ -181,27 +172,23 @@ def simulate_sample_telemetry(
     return max(0.0, round(float(rss), 2)), max(0.0, round(float(cpu), 2))
 
 
-def run_benchmark_suite(
+def run_synthetic_suite(
     output_csv: Path,
     num_runs: int = 5,
     quick_mode: bool = False,
-    mode: str = "empirical",
 ) -> pd.DataFrame:
-    """Execute standard multi-phase academic benchmarking suite across targets."""
-    print("=" * 72)
-    print(" VESSEL ACADEMIC PERFORMANCE BENCHMARKING SUITE")
-    print("=" * 72)
-    print(f" Mode:           {mode.upper()}")
+    """Execute synthetic benchmark generator. Explicitly writes to SYNTHETIC output path."""
+    print("*" * 72)
+    print("* WARNING: GENERATING SYNTHETIC DATA")
+    print("* These numbers are model-generated approximations, NOT live measurements.")
+    print("*" * 72)
     print(f" Output Path:    {output_csv}")
-    print(f" Iterations:     {num_runs} independent runs")
-    print(f" Targets:        Vessel, Electron, Google Chrome")
-    print(f" Concurrency:    [1, 3, 5] concurrent workloads")
-    print("=" * 72)
+    print(f" Iterations:     {num_runs} synthetic runs")
+    print("*" * 72)
 
     rng = np.random.default_rng(seed=42)
     records = []
 
-    # Timeline durations (seconds)
     if quick_mode:
         phase_durations = [
             ("Cold Launch", 5),
@@ -217,20 +204,13 @@ def run_benchmark_suite(
             ("Wake & Refocus", 25),
         ]
 
-    total_phases_time = sum(d for _, d in phase_durations)
     targets = ["Vessel", "Electron", "Google Chrome"]
     concurrencies = [1, 3, 5]
 
     for run_idx in range(1, num_runs + 1):
-        print(f"\n[Run {run_idx}/{num_runs}] Collecting benchmark timeline...")
         for concurrency in concurrencies:
-            active_workloads = WORKLOADS[:concurrency]
-            workload_names = ", ".join(w["name"] for w in active_workloads)
-            print(f"  -> Concurrency N={concurrency} ({workload_names})")
-
             for target in targets:
-                meta = TARGET_BASELINES[target]
-                # Sample cold startup latency with realistic distribution
+                meta = SYNTHETIC_BASELINES[target]
                 cold_latency_ms = max(
                     20.0,
                     float(rng.normal(meta["cold_start_mean_ms"], meta["cold_start_std_ms"])),
@@ -262,64 +242,30 @@ def run_benchmark_suite(
                             "startup_time_ms": round(cold_latency_ms, 1),
                             "wake_time_ms": round(wake_latency_ms, 1),
                             "workload_profile": f"N={concurrency}",
+                            "data_type": "SYNTHETIC",
                         })
                         t_clock += 1.0
 
     df = pd.DataFrame(records)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv, index=False)
-    print(f"\n[+] Successfully recorded {len(df)} telemetry samples to: {output_csv}")
+    print(f"\n[+] Wrote {len(df)} SYNTHETIC samples to: {output_csv}\n")
     return df
 
 
-def print_academic_summary_table(df: pd.DataFrame):
-    """Print academic journal statistical table to standard output."""
-    print("\n" + "=" * 80)
-    print(" EMPIRICAL PERFORMANCE BENCHMARK SUMMARY (N=5 Concurrent Apps)")
-    print("=" * 80)
-
-    subset = df[df["concurrency"] == 5]
-    summary = []
-
-    for target in ["Vessel", "Electron", "Google Chrome"]:
-        t_data = subset[subset["target"] == target]
-        active_rss = t_data[t_data["phase"] == "Active Usage"]["memory_rss_mb"]
-        idle_rss = t_data[t_data["phase"] == "Idle / Background"]["memory_rss_mb"]
-        startup = t_data["startup_time_ms"]
-        wake = t_data["wake_time_ms"]
-
-        summary.append({
-            "Target System": target,
-            "Cold Start (ms)": f"{startup.mean():.1f} ± {startup.std():.1f}",
-            "Active RAM (MB)": f"{active_rss.mean():.1f} ± {active_rss.std():.1f}",
-            "Idle/Hib RAM (MB)": f"{idle_rss.mean():.1f} ± {idle_rss.std():.1f}",
-            "Wake Latency (ms)": f"{wake.mean():.1f} ± {wake.std():.1f}",
-            "RAM Saved vs Electron": (
-                "0% (Baseline)"
-                if target == "Electron"
-                else f"{((348.0 * 5 - active_rss.mean()) / (348.0 * 5) * 100):.1f}% Active / "
-                     f"{((312.0 * 5 - idle_rss.mean()) / (312.0 * 5) * 100):.1f}% Idle"
-            ),
-        })
-
-    summary_df = pd.DataFrame(summary)
-    print(summary_df.to_string(index=False))
-    print("=" * 80 + "\n")
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Vessel Academic Performance Benchmarking Suite")
+    parser = argparse.ArgumentParser(description="Vessel Performance Benchmarking Suite")
     parser.add_argument(
         "--output",
         type=str,
-        default="benchmarks/results/benchmark_data.csv",
+        default=None,
         help="Path to output CSV destination",
     )
     parser.add_argument(
         "--runs",
         type=int,
-        default=5,
-        help="Number of iterations across each workload",
+        default=10,
+        help="Number of iterations across each workload (default: 10)",
     )
     parser.add_argument(
         "--quick",
@@ -329,20 +275,40 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["empirical", "live"],
-        default="empirical",
-        help="Benchmarking collection mode",
+        choices=["live"],
+        default="live",
+        help="Benchmarking collection mode (default: live)",
+    )
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Explicitly run synthetic model generator (produces SYNTHETIC data, not real measurements)",
     )
     args = parser.parse_args()
 
-    output_path = Path(args.output)
-    df = run_benchmark_suite(
-        output_csv=output_path,
-        num_runs=args.runs,
-        quick_mode=args.quick,
-        mode=args.mode,
-    )
-    print_academic_summary_table(df)
+    if args.synthetic:
+        output_path = Path(args.output) if args.output else Path("benchmarks/synthetic_example/SYNTHETIC_benchmark_data.csv")
+        if "SYNTHETIC" not in str(output_path):
+            output_path = output_path.with_name(f"SYNTHETIC_{output_path.name}")
+        df = run_synthetic_suite(output_path, num_runs=args.runs, quick_mode=args.quick)
+    else:
+        # Default Live Measurement Mode
+        print("=" * 72)
+        print(" VESSEL LIVE EMPIRICAL BENCHMARKING HARNESS (DEFAULT)")
+        print("=" * 72)
+        # Check if live harness requirements exist
+        vessel_bin = Path("src-tauri/target/release/vessel.exe")
+        if not vessel_bin.exists():
+            vessel_bin = Path("src-tauri/target/debug/vessel.exe")
+
+        electron_dir = Path("benchmarks/electron-shell")
+        if not vessel_bin.exists() or not electron_dir.exists():
+            print("\n[-] Live measurement targets are pending build:")
+            print(f"    - Vessel binary: {vessel_bin} (exists: {vessel_bin.exists()})")
+            print(f"    - Electron test shell: {electron_dir} (exists: {electron_dir.exists()})")
+            print("\nTo run live measurements, build the release targets as documented in benchmarks/README.md.")
+            print("To generate offline synthetic prototyping data instead, re-run with --synthetic.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

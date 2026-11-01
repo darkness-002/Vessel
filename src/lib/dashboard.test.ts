@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { getDemoState, DEMO_CONTAINERS, DEMO_METRICS, DEMO_VAULT_LOCKED } from '$lib/fixtures/demoContainers';
 import { showToast, dismissToast, toasts } from '$lib/stores/toastStore';
 import { appSettings, updateAppSettings, toggleDensity } from '$lib/stores/appSettings';
+import baselineData from '$lib/data/electron_baseline.json';
 import { get } from 'svelte/store';
-import type { EffectiveCardState } from '$lib/types';
+import type { EffectiveCardState, ElectronBaseline } from '$lib/types';
 
 describe('Vessel Dashboard Redesign Suite', () => {
   describe('Demo Mode Fixture', () => {
@@ -114,11 +115,19 @@ describe('Vessel Dashboard Redesign Suite', () => {
     });
   });
 
-  describe('Memory Telemetry Calculations', () => {
-    it('calculates measured Electron equivalent using live container counts and metrics', () => {
-      const ELECTRON_ACTIVE_MB = 348.0;
-      const ELECTRON_IDLE_MB = 312.0;
-      const ELECTRON_HIBERNATED_MB = 305.0;
+  describe('Memory Telemetry & Electron Baseline', () => {
+    it('loads electron baseline with assumed source and valid schema', () => {
+      const baseline = baselineData as ElectronBaseline;
+      expect(baseline.source).toBe('assumed');
+      expect(baseline.hardware).toBeDefined();
+      expect(baseline.os).toBeDefined();
+      expect(baseline.states.active.meanMb).toBeGreaterThan(0);
+      expect(baseline.states.idle.meanMb).toBeGreaterThan(0);
+      expect(baseline.states.hibernated.meanMb).toBeGreaterThan(0);
+    });
+
+    it('calculates estimated Electron baseline using live container counts and baseline data', () => {
+      const baseline = baselineData as ElectronBaseline;
 
       const runningCount = 1;
       const idleCount = 1;
@@ -126,18 +135,18 @@ describe('Vessel Dashboard Redesign Suite', () => {
       const lockedCount = 1;
 
       const liveVesselActiveRam = 64.2 + 48.6; // 112.8 MB
-      const measuredElectron =
-        runningCount * ELECTRON_ACTIVE_MB +
-        idleCount * ELECTRON_IDLE_MB +
-        (hibernatedCount + lockedCount) * ELECTRON_HIBERNATED_MB;
+      const estimatedElectron =
+        runningCount * baseline.states.active.meanMb +
+        idleCount * baseline.states.idle.meanMb +
+        (hibernatedCount + lockedCount) * baseline.states.hibernated.meanMb;
 
       // 348 + 312 + 2*305 = 1270 MB
-      expect(measuredElectron).toBe(1270.0);
+      expect(estimatedElectron).toBe(1270.0);
 
-      const saved = measuredElectron - liveVesselActiveRam;
+      const saved = estimatedElectron - liveVesselActiveRam;
       expect(saved).toBe(1157.2);
 
-      const reductionPercent = Math.round((saved / measuredElectron) * 100);
+      const reductionPercent = Math.round((saved / estimatedElectron) * 100);
       expect(reductionPercent).toBe(91);
     });
   });

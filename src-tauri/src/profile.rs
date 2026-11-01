@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use base64::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,7 +20,9 @@ pub fn get_vessel_root() -> PathBuf {
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             return PathBuf::from(local).join("Vessel");
         }
-        dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Vessel")
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Vessel")
     }
 
     #[cfg(target_os = "macos")]
@@ -28,12 +30,16 @@ pub fn get_vessel_root() -> PathBuf {
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home).join("Library/Application Support/Vessel");
         }
-        dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("Vessel")
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Vessel")
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Vessel")
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Vessel")
     }
 }
 
@@ -70,7 +76,13 @@ pub fn sanitize_id(name: &str) -> String {
     let cleaned: String = name
         .trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim_matches('-');
     if trimmed.is_empty() {
@@ -102,7 +114,9 @@ pub fn load_containers() -> Vec<ContainerConfig> {
 
 pub fn get_container(id: &str) -> Option<ContainerConfig> {
     let containers = load_containers();
-    containers.into_iter().find(|c| c.id.eq_ignore_ascii_case(id))
+    containers
+        .into_iter()
+        .find(|c| c.id.eq_ignore_ascii_case(id))
 }
 
 pub fn save_containers(containers: &[ContainerConfig]) -> Result<(), String> {
@@ -150,7 +164,9 @@ pub fn convert_to_ico(raw_bytes: &[u8]) -> Result<Vec<u8>, String> {
     }
 
     let mut out = Vec::new();
-    icon_dir.write(&mut out).map_err(|e| format!("Failed to write ICO bytes: {e}"))?;
+    icon_dir
+        .write(&mut out)
+        .map_err(|e| format!("Failed to write ICO bytes: {e}"))?;
     Ok(out)
 }
 
@@ -213,11 +229,12 @@ pub async fn fetch_and_save_icon(url_str: &str, id: &str) -> (Option<String>, Op
     };
 
     #[cfg(not(target_os = "windows"))]
-    let icon_path_str = if target_icon_path.exists() || std::fs::write(&target_icon_path, &bytes).is_ok() {
-        Some(target_icon_path.to_string_lossy().to_string())
-    } else {
-        None
-    };
+    let icon_path_str =
+        if target_icon_path.exists() || std::fs::write(&target_icon_path, &bytes).is_ok() {
+            Some(target_icon_path.to_string_lossy().to_string())
+        } else {
+            None
+        };
 
     let b64 = format!("data:image/png;base64,{}", BASE64_STANDARD.encode(&bytes));
     (Some(b64), icon_path_str)
@@ -235,12 +252,19 @@ pub async fn ensure_container_icon(container: &mut ContainerConfig) -> Option<Pa
     let target_icon_file = get_profile_icon_path(&container.id);
 
     // 1. If target icon already exists and is non-empty, use it
-    if target_icon_file.exists() && std::fs::metadata(&target_icon_file).map(|m| m.len() > 0).unwrap_or(false) {
+    if target_icon_file.exists()
+        && std::fs::metadata(&target_icon_file)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         let path_str = target_icon_file.to_string_lossy().to_string();
         if container.icon_path.as_deref() != Some(&path_str) {
             container.icon_path = Some(path_str);
             let mut all = load_containers();
-            if let Some(c) = all.iter_mut().find(|c| c.id.eq_ignore_ascii_case(&container.id)) {
+            if let Some(c) = all
+                .iter_mut()
+                .find(|c| c.id.eq_ignore_ascii_case(&container.id))
+            {
                 c.icon_path = container.icon_path.clone();
                 let _ = save_containers(&all);
             }
@@ -263,7 +287,10 @@ pub async fn ensure_container_icon(container: &mut ContainerConfig) -> Option<Pa
                             let path_str = target_icon_file.to_string_lossy().to_string();
                             container.icon_path = Some(path_str);
                             let mut all = load_containers();
-                            if let Some(c) = all.iter_mut().find(|c| c.id.eq_ignore_ascii_case(&container.id)) {
+                            if let Some(c) = all
+                                .iter_mut()
+                                .find(|c| c.id.eq_ignore_ascii_case(&container.id))
+                            {
                                 c.icon_path = container.icon_path.clone();
                                 let _ = save_containers(&all);
                             }
@@ -294,7 +321,10 @@ pub async fn ensure_container_icon(container: &mut ContainerConfig) -> Option<Pa
                             let path_str = target_icon_file.to_string_lossy().to_string();
                             container.icon_path = Some(path_str);
                             let mut all = load_containers();
-                            if let Some(c) = all.iter_mut().find(|c| c.id.eq_ignore_ascii_case(&container.id)) {
+                            if let Some(c) = all
+                                .iter_mut()
+                                .find(|c| c.id.eq_ignore_ascii_case(&container.id))
+                            {
                                 c.icon_path = container.icon_path.clone();
                                 let _ = save_containers(&all);
                             }
@@ -320,7 +350,10 @@ pub async fn ensure_container_icon(container: &mut ContainerConfig) -> Option<Pa
             container.icon = icon_b64;
         }
         let mut all = load_containers();
-        if let Some(c) = all.iter_mut().find(|c| c.id.eq_ignore_ascii_case(&container.id)) {
+        if let Some(c) = all
+            .iter_mut()
+            .find(|c| c.id.eq_ignore_ascii_case(&container.id))
+        {
             c.icon_path = container.icon_path.clone();
             c.icon = container.icon.clone();
             let _ = save_containers(&all);
@@ -344,9 +377,15 @@ mod tests {
 
     #[test]
     fn test_normalize_url() {
-        assert_eq!(normalize_url("open.spotify.com"), "https://open.spotify.com");
+        assert_eq!(
+            normalize_url("open.spotify.com"),
+            "https://open.spotify.com"
+        );
         assert_eq!(normalize_url("https://chatgpt.com"), "https://chatgpt.com");
-        assert_eq!(normalize_url("http://localhost:3000"), "http://localhost:3000");
+        assert_eq!(
+            normalize_url("http://localhost:3000"),
+            "http://localhost:3000"
+        );
     }
 
     #[test]
@@ -363,7 +402,8 @@ mod tests {
             *pixel = image::Rgba([255, 0, 0, 255]);
         }
         let mut png_bytes = Vec::new();
-        img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png).unwrap();
+        img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .unwrap();
 
         let ico_bytes = convert_to_ico(&png_bytes).expect("ICO conversion should succeed");
         assert!(ico_bytes.len() >= 4);

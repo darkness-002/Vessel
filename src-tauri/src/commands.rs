@@ -1,5 +1,5 @@
-use tauri::Manager;
 use crate::profile::{self, ContainerConfig};
+use tauri::Manager;
 
 #[tauri::command]
 pub fn list_containers() -> Result<Vec<ContainerConfig>, String> {
@@ -7,7 +7,11 @@ pub fn list_containers() -> Result<Vec<ContainerConfig>, String> {
 }
 
 #[tauri::command]
-pub async fn create_container(app: tauri::AppHandle, name: String, url: String) -> Result<ContainerConfig, String> {
+pub async fn create_container(
+    app: tauri::AppHandle,
+    name: String,
+    url: String,
+) -> Result<ContainerConfig, String> {
     let clean_name = name.trim().to_string();
     if clean_name.is_empty() {
         return Err("Container name cannot be empty".to_string());
@@ -85,7 +89,10 @@ pub async fn delete_container(app: tauri::AppHandle, id: String) -> Result<(), S
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
             match std::fs::remove_dir_all(&profile_dir) {
-                Ok(_) => { last_err.clear(); break; },
+                Ok(_) => {
+                    last_err.clear();
+                    break;
+                }
                 Err(e) => last_err = e.to_string(),
             }
         }
@@ -158,13 +165,15 @@ pub async fn lock_container_vault(app: tauri::AppHandle, id: String) -> Result<S
     let profile_dir = profile::get_profile_dir(&id);
     let vault_dest = crate::vault::get_vault_path(&id);
 
-    let key = crate::vault::get_or_create_vault_key(&id)
-        .map_err(|e| format!("Keyring error: {e}"))?;
+    let key =
+        crate::vault::get_or_create_vault_key(&id).map_err(|e| format!("Keyring error: {e}"))?;
 
     crate::vault::pack_and_encrypt_vault(&id, &profile_dir, &vault_dest, &key)
         .map_err(|e| format!("Vault encryption failed: {e}"))?;
 
-    Ok(format!("Vault for container '{id}' locked and encrypted at rest"))
+    Ok(format!(
+        "Vault for container '{id}' locked and encrypted at rest"
+    ))
 }
 
 #[tauri::command]
@@ -212,7 +221,9 @@ pub fn resolve_desktop_dir() -> Result<std::path::PathBuf, String> {
     #[cfg(target_os = "windows")]
     {
         if let Ok(profile) = std::env::var("USERPROFILE") {
-            let onedrive_desktop = std::path::PathBuf::from(&profile).join("OneDrive").join("Desktop");
+            let onedrive_desktop = std::path::PathBuf::from(&profile)
+                .join("OneDrive")
+                .join("Desktop");
             if onedrive_desktop.exists() {
                 return Ok(onedrive_desktop);
             }
@@ -239,8 +250,8 @@ pub fn resolve_desktop_dir() -> Result<std::path::PathBuf, String> {
 
 #[tauri::command]
 pub async fn create_shortcut(id: String) -> Result<String, String> {
-    let mut container = profile::get_container(&id)
-        .ok_or_else(|| format!("Container '{}' not found", id))?;
+    let mut container =
+        profile::get_container(&id).ok_or_else(|| format!("Container '{}' not found", id))?;
 
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Failed to get current executable path: {e}"))?;
@@ -252,15 +263,30 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
     {
         let desktop_dir = resolve_desktop_dir()?;
 
-        let safe_name: String = container.name
+        let safe_name: String = container
+            .name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
-        let safe_name = if safe_name.trim().is_empty() { id.clone() } else { safe_name.trim().to_string() };
+        let safe_name = if safe_name.trim().is_empty() {
+            id.clone()
+        } else {
+            safe_name.trim().to_string()
+        };
 
         let shortcut_path = desktop_dir.join(format!("{}.lnk", safe_name));
         let exe_str = current_exe.to_string_lossy().to_string();
-        let work_dir_str = current_exe.parent().unwrap_or(&desktop_dir).to_string_lossy().to_string();
+        let work_dir_str = current_exe
+            .parent()
+            .unwrap_or(&desktop_dir)
+            .to_string_lossy()
+            .to_string();
         let shortcut_str = shortcut_path.to_string_lossy().to_string();
         let args_str = format!("--run-container \"{}\"", id);
 
@@ -300,20 +326,37 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
             return Err(format!("Shortcut creation failed: {stderr}"));
         }
 
-        Ok(format!("Desktop shortcut created for \"{}\"", container.name))
+        Ok(format!(
+            "Desktop shortcut created for \"{}\"",
+            container.name
+        ))
     }
 
     #[cfg(target_os = "macos")]
     {
         let desktop_dir = resolve_desktop_dir()?;
-        let safe_name: String = container.name
+        let safe_name: String = container
+            .name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let shortcut_path = desktop_dir.join(format!("{}.command", safe_name.trim()));
-        let script = format!("#!/bin/sh\n\"{}\" --run-container \"{}\" &\n", current_exe.display(), id);
-        std::fs::write(&shortcut_path, script).map_err(|e| format!("Failed to write script: {e}"))?;
-        let _ = std::process::Command::new("chmod").args(["+x", &shortcut_path.to_string_lossy()]).output();
+        let script = format!(
+            "#!/bin/sh\n\"{}\" --run-container \"{}\" &\n",
+            current_exe.display(),
+            id
+        );
+        std::fs::write(&shortcut_path, script)
+            .map_err(|e| format!("Failed to write script: {e}"))?;
+        let _ = std::process::Command::new("chmod")
+            .args(["+x", &shortcut_path.to_string_lossy()])
+            .output();
 
         if let Some(icon_path) = icon_file {
             let icon_str = icon_path.to_string_lossy().to_string();
@@ -332,7 +375,10 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
                 .output();
         }
 
-        Ok(format!("Desktop shortcut created for \"{}\"", container.name))
+        Ok(format!(
+            "Desktop shortcut created for \"{}\"",
+            container.name
+        ))
     }
 
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
@@ -350,7 +396,11 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
             id,
             icon_str
         );
-        std::fs::write(&shortcut_path, content).map_err(|e| format!("Failed to write .desktop file: {e}"))?;
-        Ok(format!("Desktop shortcut created for \"{}\"", container.name))
+        std::fs::write(&shortcut_path, content)
+            .map_err(|e| format!("Failed to write .desktop file: {e}"))?;
+        Ok(format!(
+            "Desktop shortcut created for \"{}\"",
+            container.name
+        ))
     }
 }
