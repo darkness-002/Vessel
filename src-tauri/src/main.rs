@@ -295,8 +295,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let initial_run_container = parse_run_container_id(&args);
 
-    let mut init_supervisor =
-        supervisor::ProcessSupervisor::new(supervisor::SupervisorConfig::default());
+    let settings = profile::load_settings();
+    let mut init_supervisor = supervisor::ProcessSupervisor::new(supervisor::SupervisorConfig {
+        idle_timeout: std::time::Duration::from_secs(
+            settings.global_idle_threshold_minutes.max(1) * 60,
+        ),
+        check_interval: std::time::Duration::from_secs(5),
+    });
     for container in profile::load_containers() {
         init_supervisor.register_container(&container.id, &container.name, &container.url);
     }
@@ -343,7 +348,10 @@ fn main() {
             commands::lock_container_vault,
             commands::unlock_container_vault,
             commands::is_vault_locked,
-            commands::get_vault_mode
+            commands::get_vault_mode,
+            commands::get_settings,
+            commands::update_settings,
+            commands::update_container_policy
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vessel");

@@ -9,7 +9,12 @@
     VaultMode,
   } from '$lib/types';
   import { showToast } from '$lib/stores/toastStore';
-  import { appSettings, updateAppSettings, toggleDensity } from '$lib/stores/appSettings';
+  import {
+    appSettings,
+    updateAppSettings,
+    toggleDensity,
+    syncSettingsFromBackend,
+  } from '$lib/stores/appSettings';
   import { getDemoState } from '$lib/fixtures/demoContainers';
   import baselineData from '$lib/data/electron_baseline.json';
 
@@ -302,6 +307,7 @@
 
   // 3-Second Polling Effect without layout shift
   $effect(() => {
+    syncSettingsFromBackend();
     loadContainers().then(() => {
       pollTelemetry();
     });
@@ -564,7 +570,7 @@
     showContainerMenuModal = true;
   }
 
-  function handleSaveContainerSettings(
+  async function handleSaveContainerSettings(
     containerId: string,
     settings: ContainerCustomSettings
   ) {
@@ -573,7 +579,34 @@
       [containerId]: settings,
     };
     saveLocalContainerSettings(containerSettingsMap);
-    showToast('Preferences updated', 'success');
+
+    try {
+      if (!$appSettings.isDemoMode) {
+        const updated = await invoke<ContainerConfig>('update_container_policy', {
+          id: containerId,
+          name: settings.name ?? null,
+          neverHibernate: settings.neverHibernate ?? null,
+          idleThresholdMinutes: settings.idleThresholdMinutes ?? null,
+          profileLabel: settings.profileLabel ?? null,
+        });
+        containers = containers.map((c) => (c.id === containerId ? updated : c));
+      } else {
+        containers = containers.map((c) =>
+          c.id === containerId
+            ? {
+                ...c,
+                name: settings.name || c.name,
+                neverHibernate: settings.neverHibernate,
+                idleThresholdMinutes: settings.idleThresholdMinutes,
+                profileLabel: settings.profileLabel,
+              }
+            : c
+        );
+      }
+      showToast('Preferences updated', 'success');
+    } catch (err) {
+      showToast(`Failed to update policy: ${err}`, 'error');
+    }
   }
 
   async function handlePinDesktop(container: ContainerConfig) {

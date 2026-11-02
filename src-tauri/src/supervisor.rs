@@ -201,6 +201,30 @@ impl ProcessSupervisor {
         self.containers.values().cloned().collect()
     }
 
+    pub fn should_hibernate(
+        &self,
+        id: &str,
+        now: Instant,
+        never_hibernate: bool,
+        per_container_timeout: Option<Duration>,
+    ) -> bool {
+        if let Some(c) = self.containers.get(id) {
+            if c.status != ContainerStatus::Running && c.status != ContainerStatus::Idle {
+                return false;
+            }
+            if c.is_focused {
+                return false;
+            }
+            if never_hibernate {
+                return false;
+            }
+            let timeout = per_container_timeout.unwrap_or(self.config.idle_timeout);
+            now.duration_since(c.last_focused_at) >= timeout
+        } else {
+            false
+        }
+    }
+
     pub fn get_metrics(&mut self) -> Vec<ContainerProcessMetrics> {
         self.system
             .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
@@ -325,17 +349,33 @@ pub fn start_idle_monitor(app: AppHandle, supervisor: SupervisorState) {
 
             tokio::time::sleep(check_interval).await;
 
+            // Re-read settings and container policy overrides each tick
+            let settings = crate::profile::load_settings();
+            let global_timeout =
+                Duration::from_secs(settings.global_idle_threshold_minutes.max(1) * 60);
+            let containers = crate::profile::load_containers();
+            let mut container_policy_map = HashMap::new();
+            for c in containers {
+                let never = c.never_hibernate.unwrap_or(false);
+                let custom_timeout = c
+                    .idle_threshold_minutes
+                    .map(|m| Duration::from_secs(m.max(1) * 60));
+                container_policy_map.insert(c.id, (never, custom_timeout));
+            }
+
             let containers_to_hibernate: Vec<String> = {
-                if let Ok(lock) = supervisor.lock() {
+                if let Ok(mut lock) = supervisor.lock() {
+                    lock.set_idle_timeout(global_timeout);
                     let now = Instant::now();
-                    let timeout = lock.idle_timeout();
+
                     lock.get_all_managed()
                         .into_iter()
                         .filter(|c| {
-                            (c.status == ContainerStatus::Running
-                                || c.status == ContainerStatus::Idle)
-                                && !c.is_focused
-                                && now.duration_since(c.last_focused_at) >= timeout
+                            let (never, custom_timeout) = container_policy_map
+                                .get(&c.id)
+                                .copied()
+                                .unwrap_or((false, None));
+                            lock.should_hibernate(&c.id, now, never, custom_timeout)
                         })
                         .map(|c| c.id)
                         .collect()
@@ -344,8 +384,16 @@ pub fn start_idle_monitor(app: AppHandle, supervisor: SupervisorState) {
                 }
             };
 
+            // NOTE: Background audio playback detection via WebView2's ICoreWebView2_8::IsDocumentPlayingAudio
+            // was investigated. Calling it directly requires unsafe unmanaged COM vtable invocations without
+            // stable official Tauri/wry support. To maintain stability without adding heavy, volatile COM crate
+            // dependencies, automated audio detection is omitted in favor of the explicit 'Never hibernate'
+            // user policy toggle.
             for id in containers_to_hibernate {
-                println!("[Supervisor] Idle timeout reached for container '{}'. Triggering hibernation...", id);
+                println!(
+                    "[Supervisor] Idle timeout reached for container '{}'. Triggering hibernation...",
+                    id
+                );
                 let _ = hibernate_container(&app, &supervisor, &id);
             }
         }
@@ -408,5 +456,89 @@ mod tests {
         assert_eq!(metrics[0].status, ContainerStatus::Closed);
         assert_eq!(metrics[0].memory_mb, 0.0);
         assert_eq!(metrics[0].cpu_usage, 0.0);
+    }
+
+    #[test]
+    fn test_never_hibernate_skipped() {
+        let mut supervisor = ProcessSupervisor::new(SupervisorConfig {
+            idle_timeout: Duration::from_secs(10),
+            check_interval: Duration::from_secs(1),
+        });
+
+        supervisor.register_or_activate("app1", "App 1", "https://app1.com", None);
+        supervisor.update_focus("app1", false);
+
+        let now = Instant::now() + Duration::from_secs(20);
+
+        // When never_hibernate is true, container MUST NOT be hibernated
+        assert!(
+            !supervisor.should_hibernate("app1", now, true, None),
+            "Container with never_hibernate enabled must not be hibernated"
+        );
+
+        // When never_hibernate is false, container should be hibernated
+        assert!(
+            supervisor.should_hibernate("app1", now, false, None),
+            "Container with never_hibernate disabled should be hibernated when timeout is exceeded"
+        );
+    }
+
+    #[test]
+    fn test_per_container_threshold_overrides_global() {
+        let mut supervisor = ProcessSupervisor::new(SupervisorConfig {
+            idle_timeout: Duration::from_secs(100),
+            check_interval: Duration::from_secs(1),
+        });
+
+        supervisor.register_or_activate("app2", "App 2", "https://app2.com", None);
+        supervisor.update_focus("app2", false);
+
+        // Custom override shorter than global (10s vs 100s)
+        let now_15s = Instant::now() + Duration::from_secs(15);
+        assert!(
+            supervisor.should_hibernate("app2", now_15s, false, Some(Duration::from_secs(10))),
+            "Per-container 10s threshold must override global 100s threshold after 15s"
+        );
+        assert!(
+            !supervisor.should_hibernate("app2", now_15s, false, None),
+            "Global 100s threshold must not trigger after only 15s"
+        );
+
+        // Custom override longer than global (300s vs 100s)
+        let now_150s = Instant::now() + Duration::from_secs(150);
+        assert!(
+            !supervisor.should_hibernate("app2", now_150s, false, Some(Duration::from_secs(300))),
+            "Per-container 300s threshold must override global 100s threshold at 150s"
+        );
+        assert!(
+            supervisor.should_hibernate("app2", now_150s, false, None),
+            "Global 100s threshold would trigger at 150s without override"
+        );
+    }
+
+    #[test]
+    fn test_global_threshold_takes_effect() {
+        let mut supervisor = ProcessSupervisor::new(SupervisorConfig {
+            idle_timeout: Duration::from_secs(60),
+            check_interval: Duration::from_secs(1),
+        });
+
+        supervisor.register_or_activate("app3", "App 3", "https://app3.com", None);
+        supervisor.update_focus("app3", false);
+
+        let now_40s = Instant::now() + Duration::from_secs(40);
+        assert!(
+            !supervisor.should_hibernate("app3", now_40s, false, None),
+            "Global 60s threshold should not trigger at 40s"
+        );
+
+        // Dynamically update global idle timeout
+        supervisor.set_idle_timeout(Duration::from_secs(30));
+        assert_eq!(supervisor.idle_timeout(), Duration::from_secs(30));
+
+        assert!(
+            supervisor.should_hibernate("app3", now_40s, false, None),
+            "New global 30s threshold must take effect immediately at 40s"
+        );
     }
 }

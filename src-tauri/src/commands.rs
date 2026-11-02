@@ -46,6 +46,9 @@ pub async fn create_container(
         icon,
         icon_path,
         created_at: chrono::Utc::now().to_rfc3339(),
+        profile_label: None,
+        never_hibernate: None,
+        idle_threshold_minutes: None,
     };
 
     containers.push(config.clone());
@@ -450,4 +453,42 @@ pub async fn create_shortcut(id: String) -> Result<String, String> {
             container.name
         ))
     }
+}
+
+#[tauri::command]
+pub fn get_settings() -> Result<profile::VesselSettings, String> {
+    Ok(profile::load_settings())
+}
+
+#[tauri::command]
+pub fn update_settings(
+    app: tauri::AppHandle,
+    settings: profile::VesselSettings,
+) -> Result<(), String> {
+    profile::save_settings(&settings)?;
+    if let Some(state) = app.try_state::<crate::supervisor::SupervisorState>() {
+        if let Ok(mut sup) = state.lock() {
+            sup.set_idle_timeout(std::time::Duration::from_secs(
+                settings.global_idle_threshold_minutes.max(1) * 60,
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_container_policy(
+    id: String,
+    name: Option<String>,
+    never_hibernate: Option<bool>,
+    idle_threshold_minutes: Option<u64>,
+    profile_label: Option<String>,
+) -> Result<profile::ContainerConfig, String> {
+    profile::update_container_policy(
+        &id,
+        name,
+        never_hibernate,
+        idle_threshold_minutes,
+        profile_label,
+    )
 }

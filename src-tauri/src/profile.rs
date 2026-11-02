@@ -12,6 +12,34 @@ pub struct ContainerConfig {
     #[serde(default)]
     pub icon_path: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub profile_label: Option<String>,
+    #[serde(default)]
+    pub never_hibernate: Option<bool>,
+    #[serde(default)]
+    pub idle_threshold_minutes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VesselSettings {
+    #[serde(default = "default_global_idle_threshold")]
+    pub global_idle_threshold_minutes: u64,
+    #[serde(default)]
+    pub is_demo_mode: bool,
+}
+
+fn default_global_idle_threshold() -> u64 {
+    15
+}
+
+impl Default for VesselSettings {
+    fn default() -> Self {
+        Self {
+            global_idle_threshold_minutes: 15,
+            is_demo_mode: false,
+        }
+    }
 }
 
 pub fn get_vessel_root() -> PathBuf {
@@ -45,6 +73,10 @@ pub fn get_vessel_root() -> PathBuf {
 
 pub fn get_profiles_file() -> PathBuf {
     get_vessel_root().join("profiles.json")
+}
+
+pub fn get_settings_file() -> PathBuf {
+    get_vessel_root().join("settings.json")
 }
 
 pub fn get_profile_dir(id: &str) -> PathBuf {
@@ -125,6 +157,50 @@ pub fn save_containers(containers: &[ContainerConfig]) -> Result<(), String> {
     let file = get_profiles_file();
     let json = serde_json::to_string_pretty(containers).map_err(|e| e.to_string())?;
     std::fs::write(&file, json).map_err(|e| format!("Failed to save profiles.json: {e}"))
+}
+
+pub fn load_settings() -> VesselSettings {
+    let file = get_settings_file();
+    if !file.exists() {
+        return VesselSettings::default();
+    }
+    std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_settings(settings: &VesselSettings) -> Result<(), String> {
+    let root = get_vessel_root();
+    let _ = std::fs::create_dir_all(&root);
+    let file = get_settings_file();
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    std::fs::write(&file, json).map_err(|e| format!("Failed to save settings.json: {e}"))
+}
+
+pub fn update_container_policy(
+    id: &str,
+    name: Option<String>,
+    never_hibernate: Option<bool>,
+    idle_threshold_minutes: Option<u64>,
+    profile_label: Option<String>,
+) -> Result<ContainerConfig, String> {
+    let mut containers = load_containers();
+    let container = containers
+        .iter_mut()
+        .find(|c| c.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| format!("Container '{id}' not found in profiles.json"))?;
+
+    if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
+        container.name = n;
+    }
+    container.never_hibernate = never_hibernate;
+    container.idle_threshold_minutes = idle_threshold_minutes;
+    container.profile_label = profile_label;
+
+    let updated = container.clone();
+    save_containers(&containers)?;
+    Ok(updated)
 }
 
 pub fn convert_to_ico(raw_bytes: &[u8]) -> Result<Vec<u8>, String> {
