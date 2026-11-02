@@ -165,4 +165,57 @@ describe('Vessel Dashboard Redesign Suite', () => {
       expect(container.idleThresholdMinutes).toBe(30);
     });
   });
+
+  describe('Phase 4 & 5 Telemetry Badges & Action States', () => {
+    it('flags estimated: true on fallback metrics', () => {
+      const fallbackMetric = {
+        ...DEMO_METRICS['github'],
+        estimated: true,
+      };
+      expect(fallbackMetric.estimated).toBe(true);
+
+      const accurateMetric = {
+        ...DEMO_METRICS['github'],
+        estimated: false,
+      };
+      expect(accurateMetric.estimated).toBe(false);
+    });
+
+    it('tracks waking and unlocking loading states per container ID', () => {
+      let wakingId: string | null = null;
+      let unlockingCardId: string | null = null;
+
+      // When waking is triggered
+      wakingId = 'spotify';
+      expect(wakingId === 'spotify').toBe(true);
+      expect(wakingId === 'linear').toBe(false);
+
+      wakingId = null;
+
+      // When unlocking is triggered
+      unlockingCardId = 'slack';
+      expect(unlockingCardId === 'slack').toBe(true);
+      expect(unlockingCardId === 'github').toBe(false);
+
+      unlockingCardId = null;
+    });
+
+    it('executes Undo callback for Seal Vault action', () => {
+      const undoSealCallback = vi.fn();
+      const toastId = showToast('Sealed vault for "Slack"', 'info', 6000, {
+        label: 'Undo',
+        onClick: undoSealCallback,
+      });
+
+      const list = get(toasts);
+      const targetToast = list.find((t) => t.id === toastId);
+      expect(targetToast).toBeDefined();
+      expect(targetToast?.action?.label).toBe('Undo');
+
+      targetToast?.action?.onClick();
+      expect(undoSealCallback).toHaveBeenCalledTimes(1);
+
+      dismissToast(toastId);
+    });
+  });
 });

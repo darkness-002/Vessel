@@ -23,6 +23,8 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
 
     - name: Install dependencies
       run: npm install
@@ -33,8 +35,11 @@ jobs:
     - name: Frontend Tests
       run: npm test
 
-    - name: Rust Check
-      run: cd src-tauri && cargo check
+    - name: Rust Formatting Check
+      run: cd src-tauri && cargo fmt --check
+
+    - name: Rust Clippy
+      run: cd src-tauri && cargo clippy -- -D warnings
 
     - name: Rust Tests
       run: cd src-tauri && cargo test
