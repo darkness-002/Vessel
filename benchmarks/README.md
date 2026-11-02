@@ -28,10 +28,25 @@ This directory contains the benchmarking harness and plotting suite for **Vessel
 
 ## 2. Setup & Requirements
 
-Install Python dependencies:
-
+### 1. Python Environment:
 ```bash
 pip install -r benchmarks/requirements.txt
+```
+
+### 2. Comparative Electron Test Shell:
+Install the isolated Electron harness in `benchmarks/electron-shell`:
+```bash
+cd benchmarks/electron-shell
+npm install
+cd ../..
+```
+
+### 3. Vessel Binary:
+Build the production release binary:
+```bash
+cd src-tauri
+cargo build --release
+cd ..
 ```
 
 ---
@@ -42,14 +57,16 @@ pip install -r benchmarks/requirements.txt
 ```bash
 python benchmarks/run_benchmarks.py --runs 10
 ```
+Measures live working set (RSS MB) via `psutil`, cold start latency, and process tree CPU utilization across repeated trials ($\ge 10$), reporting mean, standard deviation, and 95% confidence intervals ($1.96 \cdot \sigma / \sqrt{n}$).
+Outputs to `benchmarks/results/measured_benchmark_data.csv`.
 
-> Note: Live measurement requires the compiled Vessel binary and Electron test shell. If these are not yet built, the harness will exit with clear setup instructions instead of inventing numbers.
+> **Note on Baseline Data**: `src/lib/data/electron_baseline.json` is initially marked with `"source": "assumed"`. Once you run the live benchmark harness on your local machine, update `electron_baseline.json` with your measured values, hardware model, OS, and set `"source": "measured"`. Do not commit fabricated or unmeasured numbers.
 
 ### Synthetic Model Generation (Prototyping Only):
 ```bash
 python benchmarks/run_benchmarks.py --synthetic --runs 5
 ```
-Outputs to `benchmarks/synthetic_example/SYNTHETIC_benchmark_data.csv`.
+Outputs to `benchmarks/synthetic_example/SYNTHETIC_benchmark_data.csv` with explicit synthetic watermarks and warnings.
 
 ---
 

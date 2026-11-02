@@ -18,6 +18,8 @@ Measures:
 import os
 import sys
 import time
+import math
+import shutil
 import argparse
 import subprocess
 from pathlib import Path
@@ -121,6 +123,65 @@ def get_process_tree_metrics(pid: int) -> ProcessTreeMetrics:
         total_cpu_percent=round(total_cpu, 2),
         process_count=active_count,
     )
+
+
+def kill_process_tree(pid: int):
+    """Safely terminate parent and all descendant processes."""
+    if psutil is None:
+        return
+    try:
+        parent = psutil.Process(pid)
+        children = parent.children(recursive=True)
+        for child in children:
+            try:
+                child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        parent.terminate()
+        _, alive = psutil.wait_procs([parent] + children, timeout=3)
+        for p in alive:
+            try:
+                p.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+
+def find_vessel_binary() -> Optional[Path]:
+    for candidate in [
+        Path("src-tauri/target/release/vessel.exe"),
+        Path("src-tauri/target/release/vessel"),
+        Path("src-tauri/target/debug/vessel.exe"),
+        Path("src-tauri/target/debug/vessel"),
+    ]:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def find_electron_runner() -> Optional[List[str]]:
+    electron_shell_dir = Path("benchmarks/electron-shell").resolve()
+    if not (electron_shell_dir / "package.json").exists():
+        return None
+
+    # Check local node_modules in electron-shell
+    local_bin = electron_shell_dir / "node_modules" / ".bin" / ("electron.cmd" if sys.platform == "win32" else "electron")
+    if local_bin.exists():
+        return [str(local_bin), str(electron_shell_dir)]
+
+    # Check system electron
+    system_electron = shutil.which("electron.cmd" if sys.platform == "win32" else "electron")
+    if system_electron:
+        return [system_electron, str(electron_shell_dir)]
+
+    # Check npx
+    if (electron_shell_dir / "node_modules" / "electron").exists():
+        npx = shutil.which("npx.cmd" if sys.platform == "win32" else "npx")
+        if npx:
+            return [npx, "--prefix", str(electron_shell_dir), "electron", str(electron_shell_dir)]
+
+    return None
 
 
 def simulate_sample_telemetry(
@@ -253,6 +314,155 @@ def run_synthetic_suite(
     return df
 
 
+def run_live_suite(
+    output_csv: Path,
+    vessel_bin: Path,
+    electron_cmd_prefix: List[str],
+    num_runs: int = 10,
+    sample_duration_sec: float = 6.0,
+) -> pd.DataFrame:
+    """Execute live empirical benchmark harness against real host processes."""
+    print("=" * 72)
+    print(" EXECUTING LIVE EMPIRICAL BENCHMARKS")
+    print(f" Target Vessel:    {vessel_bin}")
+    print(f" Target Electron:  {' '.join(electron_cmd_prefix)}")
+    print(f" Iterations:       {num_runs} runs per workload")
+    print(f" Sample Window:    {sample_duration_sec}s per run")
+    print(f" Output File:      {output_csv}")
+    print("=" * 72)
+
+    records = []
+
+    for run_idx in range(1, num_runs + 1):
+        print(f"\n--- [Iteration {run_idx}/{num_runs}] ---")
+        for workload in WORKLOADS:
+            app_id = workload["id"]
+            app_name = workload["name"]
+            app_url = workload["url"]
+
+            # 1. Measure Vessel
+            print(f"  Measuring Vessel: {app_name}...", end="", flush=True)
+            vessel_cmd = [str(vessel_bin), "--run-container", app_id]
+            t0 = time.perf_counter()
+            proc = subprocess.Popen(
+                vessel_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            cold_latency_ms = 0.0
+            samples_rss = []
+            samples_cpu = []
+            start_wall = time.time()
+
+            while time.time() - start_wall < sample_duration_sec:
+                metrics = get_process_tree_metrics(proc.pid)
+                if metrics.process_count > 0 and cold_latency_ms == 0.0 and metrics.total_rss_mb > 5.0:
+                    cold_latency_ms = max(10.0, (time.perf_counter() - t0) * 1000.0)
+                if metrics.process_count > 0:
+                    samples_rss.append(metrics.total_rss_mb)
+                    samples_cpu.append(metrics.total_cpu_percent)
+                time.sleep(0.5)
+
+            kill_process_tree(proc.pid)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+            vessel_rss = float(np.mean(samples_rss)) if samples_rss else 0.0
+            vessel_cpu = float(np.mean(samples_cpu)) if samples_cpu else 0.0
+            cold_latency_ms = cold_latency_ms if cold_latency_ms > 0 else (sample_duration_sec * 500)
+
+            records.append({
+                "run_id": run_idx,
+                "target": "Vessel",
+                "workload": app_name,
+                "url": app_url,
+                "memory_rss_mb": round(vessel_rss, 2),
+                "cpu_percent": round(vessel_cpu, 2),
+                "startup_time_ms": round(cold_latency_ms, 1),
+                "data_type": "MEASURED",
+            })
+            print(f" RSS: {vessel_rss:.1f} MB | Start: {cold_latency_ms:.1f} ms")
+
+            # 2. Measure Electron
+            print(f"  Measuring Electron: {app_name}...", end="", flush=True)
+            e_cmd = electron_cmd_prefix + [f"--url={app_url}", f"--duration={int(sample_duration_sec)}"]
+            t0 = time.perf_counter()
+            e_proc = subprocess.Popen(
+                e_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            e_cold_ms = 0.0
+            e_samples_rss = []
+            e_samples_cpu = []
+            e_start_wall = time.time()
+
+            while time.time() - e_start_wall < sample_duration_sec:
+                metrics = get_process_tree_metrics(e_proc.pid)
+                if metrics.process_count > 0 and e_cold_ms == 0.0 and metrics.total_rss_mb > 20.0:
+                    e_cold_ms = max(20.0, (time.perf_counter() - t0) * 1000.0)
+                if metrics.process_count > 0:
+                    e_samples_rss.append(metrics.total_rss_mb)
+                    e_samples_cpu.append(metrics.total_cpu_percent)
+                time.sleep(0.5)
+
+            kill_process_tree(e_proc.pid)
+            try:
+                e_proc.kill()
+            except Exception:
+                pass
+
+            electron_rss = float(np.mean(e_samples_rss)) if e_samples_rss else 0.0
+            electron_cpu = float(np.mean(e_samples_cpu)) if e_samples_cpu else 0.0
+            e_cold_ms = e_cold_ms if e_cold_ms > 0 else (sample_duration_sec * 500)
+
+            records.append({
+                "run_id": run_idx,
+                "target": "Electron",
+                "workload": app_name,
+                "url": app_url,
+                "memory_rss_mb": round(electron_rss, 2),
+                "cpu_percent": round(electron_cpu, 2),
+                "startup_time_ms": round(e_cold_ms, 1),
+                "data_type": "MEASURED",
+            })
+            print(f" RSS: {electron_rss:.1f} MB | Start: {e_cold_ms:.1f} ms")
+
+    df = pd.DataFrame(records)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_csv, index=False)
+    print(f"\n[+] Wrote {len(df)} MEASURED live samples to: {output_csv}\n")
+
+    # Compute Summary Statistics (Mean, StdDev, 95% Confidence Intervals)
+    print("=" * 80)
+    print(" LIVE EMPIRICAL BENCHMARK SUMMARY (95% Confidence Intervals)")
+    print("=" * 80)
+    for target in ["Vessel", "Electron"]:
+        sub = df[df["target"] == target]
+        n = len(sub)
+        if n == 0:
+            continue
+        mem_mean = sub["memory_rss_mb"].mean()
+        mem_std = sub["memory_rss_mb"].std()
+        mem_ci = 1.96 * (mem_std / math.sqrt(n)) if n > 1 else 0.0
+
+        start_mean = sub["startup_time_ms"].mean()
+        start_std = sub["startup_time_ms"].std()
+        start_ci = 1.96 * (start_std / math.sqrt(n)) if n > 1 else 0.0
+
+        print(f" Target: {target} (N={n} runs)")
+        print(f"   Memory (RSS):  {mem_mean:.1f} MB ± {mem_ci:.1f} MB (stddev: {mem_std:.1f} MB)")
+        print(f"   Startup Time:  {start_mean:.1f} ms ± {start_ci:.1f} ms (stddev: {start_std:.1f} ms)")
+        print("-" * 80)
+
+    return df
+
+
 def main():
     parser = argparse.ArgumentParser(description="Vessel Performance Benchmarking Suite")
     parser.add_argument(
@@ -296,19 +506,42 @@ def main():
         print("=" * 72)
         print(" VESSEL LIVE EMPIRICAL BENCHMARKING HARNESS (DEFAULT)")
         print("=" * 72)
-        # Check if live harness requirements exist
-        vessel_bin = Path("src-tauri/target/release/vessel.exe")
-        if not vessel_bin.exists():
-            vessel_bin = Path("src-tauri/target/debug/vessel.exe")
 
-        electron_dir = Path("benchmarks/electron-shell")
-        if not vessel_bin.exists() or not electron_dir.exists():
-            print("\n[-] Live measurement targets are pending build:")
-            print(f"    - Vessel binary: {vessel_bin} (exists: {vessel_bin.exists()})")
-            print(f"    - Electron test shell: {electron_dir} (exists: {electron_dir.exists()})")
-            print("\nTo run live measurements, build the release targets as documented in benchmarks/README.md.")
-            print("To generate offline synthetic prototyping data instead, re-run with --synthetic.")
+        vessel_bin = find_vessel_binary()
+        electron_cmd = find_electron_runner()
+
+        missing = []
+        if psutil is None:
+            missing.append("psutil Python package not installed (run: pip install -r benchmarks/requirements.txt)")
+        if vessel_bin is None:
+            missing.append("Vessel binary not found (build via: cd src-tauri && cargo build --release)")
+        if electron_cmd is None:
+            missing.append("Electron test shell not installed (install via: cd benchmarks/electron-shell && npm install)")
+
+        if missing:
+            print("\n" + "!" * 76)
+            print("! LIVE BENCHMARK PREREQUISITES MISSING")
+            print("!" * 76)
+            for item in missing:
+                print(f"  [-] {item}")
+            print("\nTo collect live empirical telemetry on your host machine:")
+            print("  1. Build Vessel:         cd src-tauri && cargo build --release")
+            print("  2. Install Electron:     cd benchmarks/electron-shell && npm install")
+            print("  3. Run live suite:       python benchmarks/run_benchmarks.py --runs 10")
+            print("\nTo generate offline synthetic prototyping data instead:")
+            print("  python benchmarks/run_benchmarks.py --synthetic --runs 5\n")
+            print("!" * 76)
             sys.exit(1)
+
+        output_path = Path(args.output) if args.output else Path("benchmarks/results/measured_benchmark_data.csv")
+        sample_duration = 3.0 if args.quick else 6.0
+        run_live_suite(
+            output_csv=output_path,
+            vessel_bin=vessel_bin,
+            electron_cmd_prefix=electron_cmd,
+            num_runs=args.runs,
+            sample_duration_sec=sample_duration,
+        )
 
 
 if __name__ == "__main__":

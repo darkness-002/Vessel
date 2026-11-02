@@ -25,6 +25,7 @@ pub struct ContainerProcessMetrics {
     pub cpu_usage: f32,
     pub last_active_at: String,
     pub idle_seconds: u64,
+    pub estimated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -257,25 +258,83 @@ impl ProcessSupervisor {
                 entry.status = ContainerStatus::Idle;
             }
 
-            let mut mem_mb = 0.0;
-            let mut cpu = 0.0;
+            let profile_dir = crate::profile::get_profile_dir(&entry.id);
+            let profile_dir_str = profile_dir.to_string_lossy().to_lowercase();
+            let normalized_profile_dir = profile_dir_str.replace('/', "\\");
 
-            if entry.status == ContainerStatus::Running || entry.status == ContainerStatus::Idle {
-                // If specific PID is known, use it directly
+            // 1. Process Attribution: find all processes where command line contains --user-data-dir matching this profile
+            let mut matched_pids: std::collections::HashSet<sysinfo::Pid> =
+                std::collections::HashSet::new();
+
+            for (pid, proc) in self.system.processes() {
+                let matches_user_data_dir = proc.cmd().iter().any(|arg| {
+                    let arg_str = arg.to_string_lossy().to_lowercase();
+                    arg_str.contains("--user-data-dir=")
+                        && (arg_str.contains(&profile_dir_str)
+                            || arg_str.contains(&normalized_profile_dir))
+                });
+                if matches_user_data_dir {
+                    matched_pids.insert(*pid);
+                }
+            }
+
+            // Expand process tree: include child and descendant processes (renderers, GPU, utilities)
+            let mut added = true;
+            while added {
+                added = false;
+                for (pid, proc) in self.system.processes() {
+                    if !matched_pids.contains(pid) {
+                        if let Some(parent) = proc.parent() {
+                            if matched_pids.contains(&parent) {
+                                matched_pids.insert(*pid);
+                                added = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let (mem_mb, cpu, estimated, detected_pid) = if !matched_pids.is_empty() {
+                // Real measured working set across all attributed WebView2 processes
+                let total_bytes: u64 = matched_pids
+                    .iter()
+                    .filter_map(|p| self.system.process(*p))
+                    .map(|p| p.memory())
+                    .sum();
+                let mem = (total_bytes as f64) / (1024.0 * 1024.0);
+                let cpu_val = matched_pids
+                    .iter()
+                    .filter_map(|p| self.system.process(*p))
+                    .map(|p| p.cpu_usage())
+                    .sum();
+                let pid_val = entry
+                    .pid
+                    .or_else(|| matched_pids.iter().next().map(|p| p.as_u32()));
+                (mem, cpu_val, false, pid_val)
+            } else if entry.status == ContainerStatus::Running
+                || entry.status == ContainerStatus::Idle
+            {
+                // Active container but process attribution failed to match command line:
+                // Fall back to window PID or child split and mark as estimated: true
+                let mut mem = 0.0;
+                let mut cpu_val = 0.0;
                 if let Some(target_pid) = entry.pid {
                     let spid = sysinfo::Pid::from_u32(target_pid);
                     if let Some(proc) = self.system.process(spid) {
-                        mem_mb = (proc.memory() as f64) / (1024.0 * 1024.0);
-                        cpu = proc.cpu_usage();
+                        mem = (proc.memory() as f64) / (1024.0 * 1024.0);
+                        cpu_val = proc.cpu_usage();
                     }
                 }
 
-                // Fallback to webview subprocess allocation
-                if mem_mb == 0.0 && active_count > 0 {
-                    mem_mb = (total_child_mem as f64 / active_count as f64) / (1024.0 * 1024.0);
-                    cpu = total_child_cpu / active_count as f32;
+                if mem == 0.0 && active_count > 0 {
+                    mem = (total_child_mem as f64 / active_count as f64) / (1024.0 * 1024.0);
+                    cpu_val = total_child_cpu / active_count as f32;
                 }
-            }
+                (mem, cpu_val, true, entry.pid)
+            } else {
+                // Hibernated or Closed container with no lingering processes remaining
+                (0.0, 0.0, false, entry.pid)
+            };
 
             let last_active_str = chrono::Utc::now()
                 .checked_sub_signed(chrono::Duration::seconds(idle_seconds as i64))
@@ -287,11 +346,12 @@ impl ProcessSupervisor {
                 name: entry.name.clone(),
                 url: entry.current_url.clone(),
                 status: entry.status,
-                pid: entry.pid,
+                pid: detected_pid,
                 memory_mb: (mem_mb * 10.0).round() / 10.0,
                 cpu_usage: (cpu * 10.0).round() / 10.0,
                 last_active_at: last_active_str,
                 idle_seconds,
+                estimated,
             });
         }
 
@@ -456,6 +516,19 @@ mod tests {
         assert_eq!(metrics[0].status, ContainerStatus::Closed);
         assert_eq!(metrics[0].memory_mb, 0.0);
         assert_eq!(metrics[0].cpu_usage, 0.0);
+        assert!(!metrics[0].estimated);
+    }
+
+    #[test]
+    fn test_metrics_estimated_fallback_for_unattributed_active_container() {
+        let mut supervisor = ProcessSupervisor::new(SupervisorConfig::default());
+        supervisor.register_or_activate("c_active", "Active App", "https://app.com", None);
+        let metrics = supervisor.get_metrics();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].id, "c_active");
+        assert_eq!(metrics[0].status, ContainerStatus::Running);
+        // Active container with no matching WebView2 child process must be flagged estimated
+        assert!(metrics[0].estimated);
     }
 
     #[test]

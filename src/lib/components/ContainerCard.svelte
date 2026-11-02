@@ -212,8 +212,17 @@
           <!-- RAM & CPU with Mini Sparkline -->
           <div class="flex items-center justify-between gap-3 text-xs font-mono">
             <div class="space-y-0.5">
-              <div class="text-zinc-200">
-                RAM: <span class="font-semibold text-emerald-400">{metric?.memoryMb.toFixed(1)} MB</span>
+              <div class="text-zinc-200 flex items-center gap-1.5">
+                <span>RAM:</span>
+                <span class="font-semibold text-emerald-400">{metric?.memoryMb.toFixed(1)} MB</span>
+                {#if metric?.estimated}
+                  <span
+                    class="text-[9px] px-1 py-0.5 rounded bg-amber-950/60 border border-amber-800/60 text-amber-300 font-mono uppercase tracking-wider font-normal"
+                    title="Estimated via fallback attribution"
+                  >
+                    estimated
+                  </span>
+                {/if}
               </div>
               <div class="text-zinc-400 text-[11px]">
                 CPU: <span class="text-zinc-300">{metric?.cpuUsage.toFixed(1)}%</span>
@@ -245,7 +254,17 @@
           <!-- Idle Countdown Bar -->
           <div class="space-y-1.5">
             <div class="flex items-center justify-between text-[11px] font-mono">
-              <span class="text-zinc-400">RAM: {metric?.memoryMb.toFixed(1)} MB</span>
+              <span class="text-zinc-400 flex items-center gap-1.5">
+                <span>RAM: {metric?.memoryMb.toFixed(1)} MB</span>
+                {#if metric?.estimated}
+                  <span
+                    class="text-[9px] px-1 py-0.5 rounded bg-amber-950/60 border border-amber-800/60 text-amber-300 font-mono uppercase tracking-wider font-normal"
+                    title="Estimated via fallback attribution"
+                  >
+                    estimated
+                  </span>
+                {/if}
+              </span>
               {#if container.neverHibernate}
                 <span class="text-zinc-500 font-sans">Never hibernate active</span>
               {:else}

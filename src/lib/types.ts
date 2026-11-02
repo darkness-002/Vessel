@@ -18,6 +18,7 @@ export interface ContainerProcessMetrics {
   cpuUsage: number;
   lastActiveAt: string;
   idleSeconds: number;
+  estimated?: boolean;
   history?: { memoryMb: number; cpuUsage: number }[];
 }
 
