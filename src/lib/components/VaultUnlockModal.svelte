@@ -45,31 +45,31 @@
 
 {#if isOpen && container}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 animate-in fade-in"
     onclick={(e) => {
       if (e.target === e.currentTarget && !isUnlocking) onClose();
     }}
     role="presentation"
   >
     <div
-      class="bg-[#15181e] border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 select-none"
+      class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 select-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="vault-unlock-title"
     >
       <!-- Modal Header -->
-      <div class="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+      <div class="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
         <div class="flex items-center gap-2.5">
           <div
-            class="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/25 flex items-center justify-center text-purple-400"
+            class="w-8 h-8 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--accent-primary)]"
           >
             <Icon name="lock" size={16} />
           </div>
           <div>
-            <h2 id="vault-unlock-title" class="text-sm font-semibold text-zinc-100">
+            <h2 id="vault-unlock-title" class="text-sm font-semibold text-[var(--text-primary)]">
               Unlock Encrypted Vault
             </h2>
-            <p class="text-[11px] text-zinc-400 font-mono mt-0.5">{container.name}</p>
+            <p class="text-[11px] text-[var(--text-muted)] font-mono mt-0.5">{container.name}</p>
           </div>
         </div>
 
@@ -77,10 +77,10 @@
           type="button"
           onclick={onClose}
           disabled={isUnlocking}
-          class="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 transition-colors disabled:opacity-40"
+          class="inline-flex items-center justify-center min-w-[36px] min-h-[36px] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none transition-colors disabled:opacity-40"
           aria-label="Close dialog"
         >
-          <Icon name="close" size={18} />
+          <Icon name="close" size={16} />
         </button>
       </div>
 
@@ -97,13 +97,13 @@
         {/if}
 
         {#if vaultMode === 'passphrase'}
-          <div class="text-xs text-zinc-400 leading-relaxed bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
-            This container's profile is encrypted at rest with <strong class="text-zinc-200">AES-256-GCM</strong> using a custom master passphrase.
+          <div class="text-xs text-[var(--text-muted)] leading-relaxed bg-[var(--bg-canvas)] p-3 rounded-xl border border-[var(--border-subtle)]">
+            This container's profile is encrypted at rest with <strong class="text-[var(--text-primary)]">AES-256-GCM</strong> using a custom master passphrase.
             Please enter your passphrase to decrypt and launch.
           </div>
 
           <div>
-            <label for="vault-passphrase" class="block text-xs font-medium text-zinc-300 mb-1.5">
+            <label for="vault-passphrase" class="block text-xs font-medium text-[var(--text-primary)] mb-1.5">
               Master Passphrase
             </label>
             <div class="relative flex items-center">
@@ -114,12 +114,12 @@
                 placeholder="Enter master passphrase"
                 required
                 disabled={isUnlocking}
-                class="w-full px-3 py-2 text-xs font-mono bg-zinc-900 border border-zinc-700/80 rounded-lg focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none text-zinc-100 placeholder:text-zinc-500 transition-colors pr-12 min-h-[44px]"
+                class="w-full px-3 py-2 text-xs font-mono bg-[var(--bg-canvas)] border border-[var(--border-subtle)] rounded-xl focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)] transition-colors pr-12 min-h-[40px]"
               />
               <button
                 type="button"
                 onclick={() => (showPassword = !showPassword)}
-                class="absolute right-1 inline-flex items-center justify-center min-w-[40px] min-h-[40px] text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 transition-colors rounded"
+                class="absolute right-1 inline-flex items-center justify-center min-w-[36px] min-h-[36px] text-[var(--text-muted)] hover:text-[var(--text-primary)] focus-visible:outline-none transition-colors rounded"
                 aria-label={showPassword ? 'Hide passphrase' : 'Show passphrase'}
               >
                 <Icon name={showPassword ? 'lock_open' : 'lock'} size={16} />
@@ -127,11 +127,11 @@
             </div>
           </div>
         {:else}
-          <div class="text-xs text-zinc-400 leading-relaxed bg-zinc-900/60 p-3.5 rounded-lg border border-zinc-800/80 space-y-1.5">
+          <div class="text-xs text-[var(--text-muted)] leading-relaxed bg-[var(--bg-canvas)] p-3.5 rounded-xl border border-[var(--border-subtle)] space-y-1.5">
             <p>
-              This container's session cookies and storage are encrypted at rest with <strong class="text-zinc-200">AES-256-GCM</strong>.
+              This container's session cookies and storage are encrypted at rest with <strong class="text-[var(--text-primary)]">AES-256-GCM</strong>.
             </p>
-            <p class="text-zinc-300">
+            <p class="text-[var(--text-primary)]">
               The cryptographic key is stored in your native <strong>OS Credential Store</strong>. Click Unlock to launch.
             </p>
           </div>
@@ -143,14 +143,14 @@
             type="button"
             onclick={onClose}
             disabled={isUnlocking}
-            class="min-h-[44px] px-4 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 transition-colors disabled:opacity-40"
+            class="min-h-[38px] px-4 rounded-xl text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none transition-colors disabled:opacity-40"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={isUnlocking}
-            class="min-h-[44px] inline-flex items-center gap-2 px-5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 transition-colors shadow-sm disabled:opacity-50"
+            class="min-h-[38px] inline-flex items-center gap-2 px-5 rounded-xl bg-[var(--accent-primary)] hover:opacity-95 text-[var(--accent-fg)] text-xs font-semibold active:scale-[0.98] transition-colors shadow-sm disabled:opacity-50"
           >
             {#if isUnlocking}
               <Icon name="spinner" size={14} />

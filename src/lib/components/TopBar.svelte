@@ -1,89 +1,101 @@
 <script lang="ts">
-  import type { CardDensity } from '$lib/types';
-  import Icon from '$lib/components/Icon.svelte';
+  import VesselLogo from '$lib/components/VesselLogo.svelte';
 
   interface Props {
-    searchQuery: string;
-    searchInputRef: HTMLInputElement | null;
-    density: CardDensity;
-    savedMb: number;
-    onNewContainer: () => void;
+    activeTab?: 'apps' | 'manage';
+    onSelectTab?: (tab: 'apps' | 'manage') => void;
+    onOpenQuickSwitcher?: () => void;
+    onOpenDocumentation?: () => void;
+    onOpenSettings?: () => void;
   }
 
   let {
-    searchQuery = $bindable(),
-    searchInputRef = $bindable(),
-    density,
-    savedMb = 0,
-    onNewContainer,
+    activeTab = 'apps',
+    onSelectTab,
+    onOpenQuickSwitcher,
+    onOpenDocumentation,
+    onOpenSettings,
   }: Props = $props();
-
-  function formatMemory(mb: number): string {
-    if (mb >= 1024) {
-      return `${(mb / 1024).toFixed(2)} GB`;
-    }
-    return `${mb.toFixed(0)} MB`;
-  }
 </script>
 
 <header
-  class="h-16 border-b border-zinc-800 bg-[#0c0e12]/95 backdrop-blur-md px-6 flex items-center justify-between shrink-0 z-10 select-none gap-4"
-  aria-label="Top header"
+  data-tauri-drag-region
+  class="h-14 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] shrink-0 z-20 select-none"
+  aria-label="Top navigation"
 >
-  <!-- Search Filter Input -->
-  <div class="relative w-72 sm:w-80">
-    <div class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-400">
-      <Icon name="search" size={16} />
+  <div class="w-full px-6 md:px-10 xl:px-14 h-full flex items-center justify-between">
+    <!-- Left: Brand / Logo + Navigation Tabs -->
+    <div class="flex items-center gap-8 h-full">
+      <!-- Brand -->
+      <div class="flex items-center gap-2.5">
+        <VesselLogo size={22} />
+        <span class="font-semibold text-base tracking-tight text-[var(--text-primary)]">
+          Vessel
+        </span>
+      </div>
+
+      <!-- Center-left Navigation Tabs -->
+      <nav class="flex items-center gap-6 h-full" aria-label="Main tabs">
+        <button
+          type="button"
+          onclick={() => onSelectTab?.('apps')}
+          class="h-full flex items-center text-xs transition-colors relative border-b-2 focus-visible:outline-none cursor-pointer {activeTab === 'apps'
+            ? 'border-[var(--accent-primary)] text-[var(--text-primary)] font-semibold'
+            : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)] font-normal'}"
+        >
+          Your apps
+        </button>
+
+        <button
+          type="button"
+          onclick={() => onSelectTab?.('manage')}
+          class="h-full flex items-center text-xs transition-colors relative border-b-2 focus-visible:outline-none cursor-pointer {activeTab === 'manage'
+            ? 'border-[var(--accent-primary)] text-[var(--text-primary)] font-semibold'
+            : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)] font-normal'}"
+        >
+          Manage containers
+        </button>
+      </nav>
     </div>
 
-    <input
-      bind:this={searchInputRef}
-      type="text"
-      bind:value={searchQuery}
-      placeholder="Filter containers..."
-      class="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg pl-9 pr-8 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 outline-none transition-colors min-h-[44px]"
-      aria-label="Filter containers"
-    />
-
-    {#if searchQuery}
+    <!-- Right Utilities: Quick Switcher, Documentation & Settings -->
+    <div class="flex items-center gap-3 sm:gap-4">
+      <!-- Quick Switcher Trigger (Ctrl+K) -->
       <button
         type="button"
-        onclick={() => (searchQuery = '')}
-        class="absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-w-[36px] min-h-[36px] text-zinc-400 hover:text-zinc-100 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 transition-colors"
-        aria-label="Clear filter"
+        onclick={() => onOpenQuickSwitcher?.()}
+        class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-primary)] rounded-lg px-2.5 py-1.5 bg-[var(--bg-canvas)] border border-[var(--border-subtle)] hover:bg-[var(--bg-surface-hover)] cursor-pointer shadow-sm"
+        title="Open Quick Switcher (Ctrl+K)"
       >
-        <Icon name="close" size={14} />
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.3-4.3"/>
+        </svg>
+        <span class="hidden sm:inline">Quick Switcher</span>
+        <kbd class="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)] font-mono text-[10px] text-[var(--text-muted)]">
+          Ctrl+K
+        </kbd>
       </button>
-    {:else}
-      <kbd
-        class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 border border-zinc-700/80 rounded px-1.5 py-0.5 font-mono pointer-events-none bg-zinc-800"
-      >
-        /
-      </kbd>
-    {/if}
-  </div>
 
-  <!-- Right Actions -->
-  <div class="flex items-center gap-3">
-    <!-- In minimal mode: single small "memory saved" figure -->
-    {#if density === 'minimal' && savedMb > 0}
-      <div
-        class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono text-emerald-400"
-        title="Estimated memory saved relative to assumed Electron baseline"
+      <!-- Documentation & Benchmarks Link -->
+      <button
+        type="button"
+        onclick={() => onOpenDocumentation?.()}
+        class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-primary)] rounded px-1.5 py-1 cursor-pointer"
+        title="Open Documentation & Benchmarks"
       >
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        <span>+{formatMemory(savedMb)} est. saved</span>
-      </div>
-    {/if}
+        <span>Documentation & Benchmarks</span>
+        <span class="text-[11px] leading-none">↗</span>
+      </button>
 
-    <!-- "New container" button -->
-    <button
-      type="button"
-      onclick={onNewContainer}
-      class="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 transition-colors shadow-sm"
-    >
-      <Icon name="add" size={16} />
-      <span>New Container</span>
-    </button>
+      <!-- Settings Button -->
+      <button
+        type="button"
+        onclick={() => onOpenSettings?.()}
+        class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-primary)] rounded px-1.5 py-1 cursor-pointer"
+      >
+        <span>Settings</span>
+      </button>
+    </div>
   </div>
 </header>

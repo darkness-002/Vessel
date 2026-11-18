@@ -39,7 +39,9 @@ pub fn open_manager_window(app: &tauri::AppHandle) -> Result<(), String> {
         .title("Vessel")
         .inner_size(960.0, 680.0)
         .min_inner_size(700.0, 500.0)
-        .resizable(true);
+        .resizable(true)
+        .transparent(false)
+        .shadow(true);
 
     builder
         .build()

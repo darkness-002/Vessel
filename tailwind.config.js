@@ -5,6 +5,16 @@ export default {
   theme: {
     extend: {
       colors: {
+        canvas: "var(--bg-canvas)",
+        surface: "var(--bg-surface)",
+        "surface-hover": "var(--bg-surface-hover)",
+        "border-subtle": "var(--border-subtle)",
+        "accent-primary": "var(--accent-primary)",
+        "accent-fg": "var(--accent-fg)",
+        "text-primary": "var(--text-primary)",
+        "text-muted": "var(--text-muted)",
+        "status-running": "var(--status-running)",
+        "status-locked": "var(--status-locked)",
         "vessel-bg": "#0c0e12",
         "vessel-card": "#15181e",
         "vessel-card-hover": "#1c2028",

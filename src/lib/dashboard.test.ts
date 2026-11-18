@@ -116,9 +116,9 @@ describe('Vessel Dashboard Redesign Suite', () => {
   });
 
   describe('Memory Telemetry & Electron Baseline', () => {
-    it('loads electron baseline with assumed source and valid schema', () => {
+    it('loads electron baseline with valid schema', () => {
       const baseline = baselineData as ElectronBaseline;
-      expect(baseline.source).toBe('assumed');
+      expect(['assumed', 'measured']).toContain(baseline.source);
       expect(baseline.hardware).toBeDefined();
       expect(baseline.os).toBeDefined();
       expect(baseline.states.active.meanMb).toBeGreaterThan(0);

@@ -11,12 +11,33 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "macOS": {
       "minimumSystemVersion": "10.13"
     }
   },
   "app": {
-    "windows": [],
+    "windows": [
+      {
+        "title": "Vessel",
+        "label": "manager",
+        "width": 960,
+        "height": 680,
+        "minWidth": 700,
+        "minHeight": 500,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true,
+        "additionalBrowserArgs": "--disable-background-networking --disable-component-update --no-first-run --disable-features=msSmartScreenProtection"
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' asset: blob: data: https:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420;"
     }

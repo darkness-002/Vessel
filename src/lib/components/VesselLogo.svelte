@@ -1,23 +1,19 @@
 <script lang="ts">
-  export let size: number = 28;
+  export let size: number = 24;
   export let className: string = '';
 </script>
 
 <svg
   width={size}
   height={size}
-  viewBox="0 0 48 48"
+  viewBox="0 0 256 256"
   fill="none"
   xmlns="http://www.w3.org/2000/svg"
-  class={className}
+  class="text-[var(--accent-primary)] {className}"
+  aria-hidden="true"
 >
-  <!-- Sleek rounded squircle background -->
-  <rect width="48" height="48" rx="12" fill="#12151E" />
-  <rect x="0.5" y="0.5" width="47" height="47" rx="11.5" stroke="#FFFFFF" stroke-opacity="0.1" />
-
-  <!-- Clean, bold minimalist V mark -->
   <path
-    d="M13 14L24 35L35 14H29.5L24 25.5L18.5 14H13Z"
-    fill="#FFFFFF"
+    d="M158.4 42.1C160.8 43.8 162.2 46.5 162.9 49.3L180.5 122.8C181.3 126.1 179.3 129.4 176.1 130.4L117.8 163.6C113.9 165.8 114.8 171.8 119.2 172.6L187.8 153.2C191.8 152.1 195.8 155.1 196.3 159.2L199.6 199.8C200.2 204.6 195.4 208.2 191.0 206.2L59.2 196.9C54.4 196.5 51.8 190.7 55.0 186.9L154.2 44.5C155.3 43.1 156.8 42.2 158.4 42.1Z"
+    fill="currentColor"
   />
 </svg>

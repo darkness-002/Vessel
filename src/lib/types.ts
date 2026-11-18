@@ -1,12 +1,21 @@
-export type ContainerStatus = 'running' | 'idle' | 'hibernated' | 'closed';
+export type ThemeMode = 'monochrome' | 'paper';
 
-export type EffectiveCardState = 'running' | 'idle' | 'hibernated' | 'locked' | 'closed';
+export type DashboardViewMode = 'simple' | 'detailed';
+
+export type ContainerStatus = 'running' | 'idle' | 'hibernated' | 'closed' | 'crashed';
+
+export type EffectiveCardState = 'running' | 'idle' | 'hibernated' | 'locked' | 'closed' | 'crashed';
 
 export type CardDensity = 'minimal' | 'detailed';
 
-export type FilterCategory = 'all' | 'active' | 'hibernated' | 'locked';
+export type FilterCategory = 'all' | 'running' | 'locked' | 'active' | 'hibernated';
 
 export type VaultMode = 'keyring' | 'passphrase';
+
+export interface PowerStatus {
+  isOnBattery: boolean;
+  batteryPercentage?: number;
+}
 
 export interface ContainerProcessMetrics {
   id: string;
@@ -32,6 +41,7 @@ export interface ContainerConfig {
   profileLabel?: string;
   neverHibernate?: boolean;
   idleThresholdMinutes?: number;
+  ssoAllowlist?: string[];
 }
 
 export interface ContainerCustomSettings {
@@ -39,12 +49,16 @@ export interface ContainerCustomSettings {
   profileLabel?: string;
   neverHibernate?: boolean;
   idleThresholdMinutes?: number;
+  ssoAllowlist?: string[];
 }
 
 export interface AppSettings {
+  theme: ThemeMode;
+  viewMode: DashboardViewMode;
   density: CardDensity;
   isDemoMode: boolean;
   globalIdleThresholdMinutes: number;
+  muteAllNotifications: boolean;
 }
 
 export interface MemoryComparison {
