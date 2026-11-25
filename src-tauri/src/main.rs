@@ -114,14 +114,9 @@ pub fn is_allowed_container_navigation(url: &url::Url, base_host: &str, root_dom
         "linkedin.com",
     ];
 
-    if KNOWN_AUTH_DOMAINS
+    KNOWN_AUTH_DOMAINS
         .iter()
         .any(|&auth| target_host == auth || target_host.ends_with(&format!(".{auth}")))
-    {
-        return true;
-    }
-
-    false
 }
 
 pub fn open_or_focus_container(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
